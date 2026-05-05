@@ -184,23 +184,75 @@ body {
 
 .auth-panel {
     margin: auto;
-    width: min(440px, 88%);
+    width: min(480px, 88%);
     background: var(--white);
-    border-radius: 24px;
-    padding: 28px;
+    border-radius: 18px;
+    padding: 30px;
     box-shadow: var(--shadow);
     border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+.auth-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.auth-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: #213547;
+    color: var(--white);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    letter-spacing: 0;
+}
+
 .auth-panel h2 {
-    color: var(--primary-color);
-    margin-bottom: 8px;
+    color: #213547;
+    margin-bottom: 4px;
+    font-size: 1.7rem;
 }
 
 .auth-panel p {
     color: var(--text-light);
     font-size: 0.92rem;
     margin-bottom: 16px;
+}
+
+.auth-subtitle {
+    margin-bottom: 0 !important;
+    color: #4f6f8f !important;
+    font-weight: 700;
+}
+
+.auth-description {
+    color: var(--text-color) !important;
+    line-height: 1.5;
+}
+
+.auth-alert {
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.auth-alert-error {
+    background: #fff1f0;
+    border: 1px solid #ffccc7;
+    color: #a8071a;
+}
+
+.auth-alert-success {
+    background: #f6ffed;
+    border: 1px solid #b7eb8f;
+    color: #237804;
 }
 
 .auth-form {
@@ -221,22 +273,41 @@ body {
 
 .auth-form input:focus,
 .auth-form select:focus {
-    border-color: var(--primary-light);
+    border-color: #4f6f8f;
+}
+
+.auth-form input:disabled,
+.auth-form select:disabled {
+    background: #f5f5f5;
+    cursor: not-allowed;
 }
 
 .auth-submit {
     border-radius: 12px !important;
     width: 100% !important;
     height: 44px !important;
+    background: #213547 !important;
+    box-shadow: 0 4px 12px rgba(33, 53, 71, 0.18) !important;
 }
 
 .auth-switch {
     border: none;
     background: none;
-    color: var(--primary-color);
+    color: #4f6f8f;
     cursor: pointer;
     font-weight: 700;
     padding-top: 4px;
+}
+
+.auth-switch:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.auth-help {
+    margin: -2px 0 4px !important;
+    color: var(--text-light) !important;
+    font-size: 0.82rem !important;
 }
 
 .chat-header {

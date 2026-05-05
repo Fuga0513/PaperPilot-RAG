@@ -54,23 +54,32 @@
         <!-- Main Chat Area -->
         <main class="main-content">
             <div v-if="!isAuthenticated" class="auth-panel">
-                <h2>{{ authMode === 'login' ? '登录 SuperMew' : '注册 SuperMew' }}</h2>
-                <p>登录后即可使用聊天和历史记录；管理员可管理文档知识库。</p>
-                <div class="auth-form">
-                    <input v-model="authForm.username" type="text" placeholder="用户名" />
-                    <input v-model="authForm.password" type="password" placeholder="密码" />
-                    <select v-if="authMode === 'register'" v-model="authForm.role">
+                <div class="auth-brand">
+                    <div class="auth-logo">PP</div>
+                    <div>
+                        <h2>PaperPilot-RAG</h2>
+                        <p class="auth-subtitle">Research-Oriented Agentic RAG Assistant</p>
+                    </div>
+                </div>
+                <p class="auth-description">请登录后管理你的科研论文库、会话和 RAG 工具。</p>
+                <div v-if="authError" class="auth-alert auth-alert-error">{{ authError }}</div>
+                <div v-if="authNotice" class="auth-alert auth-alert-success">{{ authNotice }}</div>
+                <form class="auth-form" @submit.prevent="handleAuthSubmit">
+                    <input v-model="authForm.username" type="text" autocomplete="username" placeholder="用户名" :disabled="authLoading" />
+                    <input v-model="authForm.password" type="password" autocomplete="current-password" placeholder="密码" :disabled="authLoading" />
+                    <select v-if="authMode === 'register'" v-model="authForm.role" :disabled="authLoading">
                         <option value="user">普通用户</option>
                         <option value="admin">管理员</option>
                     </select>
-                    <input v-if="authMode === 'register' && authForm.role === 'admin'" v-model="authForm.admin_code" type="password" placeholder="管理员邀请码" />
-                    <button class="send-btn auth-submit" :disabled="authLoading" @click="handleAuthSubmit">
+                    <input v-if="authMode === 'register' && authForm.role === 'admin'" v-model="authForm.admin_code" type="password" placeholder="管理员邀请码" :disabled="authLoading" />
+                    <p v-if="authMode === 'register' && authForm.role === 'admin'" class="auth-help">管理员账号需要填写后端 .env 中配置的 ADMIN_INVITE_CODE。</p>
+                    <button type="submit" class="send-btn auth-submit" :disabled="authLoading || !authForm.username || !authForm.password">
                         {{ authLoading ? '提交中...' : (authMode === 'login' ? '登录' : '注册') }}
                     </button>
-                    <button class="auth-switch" @click="authMode = authMode === 'login' ? 'register' : 'login'">
+                    <button type="button" class="auth-switch" :disabled="authLoading" @click="switchAuthMode">
                         {{ authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录' }}
                     </button>
-                </div>
+                </form>
             </div>
 
             <!-- Settings Panel -->

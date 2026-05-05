@@ -33,7 +33,9 @@ createApp({
                 role: 'user',
                 admin_code: ''
             },
-            authLoading: false
+            authLoading: false,
+            authError: '',
+            authNotice: ''
         };
     },
     computed: {
@@ -48,9 +50,9 @@ createApp({
         this.configureMarked();
         if (this.token) {
             try {
-                await this.fetchMe();
-            } catch (_) {
-                this.handleLogout();
+                await this.loadCurrentUser();
+            } catch (error) {
+                this.logout(error.message || '登录已过期，请重新登录');
             }
         }
     },
@@ -82,31 +84,118 @@ createApp({
             return div.innerHTML;
         },
 
-        authHeaders(extra = {}) {
-            const headers = { ...extra };
+        // Auth / Token management
+        getToken() {
+            // Read the JWT used by authenticated API requests.
+            return localStorage.getItem('accessToken') || '';
+        },
+
+        setToken(token) {
+            // Store the JWT returned by POST /auth/login.
+            this.token = token || '';
             if (this.token) {
-                headers.Authorization = `Bearer ${this.token}`;
+                localStorage.setItem('accessToken', this.token);
+            }
+        },
+
+        clearToken() {
+            // Remove the local JWT when logout or 401 happens.
+            this.token = '';
+            localStorage.removeItem('accessToken');
+        },
+
+        authHeaders(extra = {}) {
+            // Build request headers and attach Authorization for protected APIs.
+            const headers = { ...extra };
+            const token = this.getToken();
+            if (token) {
+                headers.Authorization = `Bearer ${token}`;
             }
             return headers;
         },
 
         async authFetch(url, options = {}) {
+            // Call a protected API and return to login if the backend returns 401.
             const opts = { ...options };
             opts.headers = this.authHeaders(opts.headers || {});
             const response = await fetch(url, opts);
             if (response.status === 401) {
-                this.handleLogout();
+                this.logout('登录已过期，请重新登录');
                 throw new Error('登录已过期，请重新登录');
             }
             return response;
         },
 
-        async fetchMe() {
+        requireAuth() {
+            // Guard actions that require a logged-in user before calling APIs.
+            if (this.isAuthenticated) return true;
+            this.authError = '请先登录后再继续操作。';
+            return false;
+        },
+
+        async loadCurrentUser() {
+            // Verify saved token with GET /auth/me and update current user state.
             const response = await this.authFetch('/auth/me');
             if (!response.ok) {
                 throw new Error('认证失败');
             }
             this.currentUser = await response.json();
+            this.authError = '';
+        },
+
+        async fetchMe() {
+            // Backward-compatible wrapper for existing code paths.
+            return this.loadCurrentUser();
+        },
+
+        async login() {
+            // Submit credentials to POST /auth/login, save JWT, and enter the app.
+            const data = await this.submitAuthRequest('/auth/login', {
+                username: this.authForm.username.trim(),
+                password: this.authForm.password.trim()
+            });
+            this.setToken(data.access_token);
+            this.currentUser = { username: data.username, role: data.role };
+            this.authForm.password = '';
+            this.authNotice = '';
+            this.authError = '';
+            this.messages = [];
+            this.sessionId = 'session_' + Date.now();
+            this.activeNav = 'newChat';
+        },
+
+        async register() {
+            // Create an account with POST /auth/register, then ask the user to log in.
+            const payload = {
+                username: this.authForm.username.trim(),
+                password: this.authForm.password.trim(),
+                role: this.authForm.role
+            };
+            if (payload.role === 'admin') {
+                payload.admin_code = this.authForm.admin_code || null;
+            }
+            await this.submitAuthRequest('/auth/register', payload);
+            this.clearToken();
+            this.currentUser = null;
+            this.authMode = 'login';
+            this.authForm.password = '';
+            this.authForm.admin_code = '';
+            this.authNotice = '注册成功，请登录。';
+            this.authError = '';
+        },
+
+        async submitAuthRequest(endpoint, payload) {
+            // Shared auth request helper for login/register endpoints.
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.detail || '认证请求失败');
+            }
+            return data;
         },
 
         async handleAuthSubmit() {
@@ -114,57 +203,49 @@ createApp({
             const username = this.authForm.username.trim();
             const password = this.authForm.password.trim();
             if (!username || !password) {
-                alert('用户名和密码不能为空');
+                this.authError = '用户名和密码不能为空。';
                 return;
             }
 
             this.authLoading = true;
+            this.authError = '';
+            this.authNotice = '';
             try {
-                const endpoint = this.authMode === 'login' ? '/auth/login' : '/auth/register';
-                const payload = {
-                    username,
-                    password
-                };
-                if (this.authMode === 'register') {
-                    payload.role = this.authForm.role;
-                    payload.admin_code = this.authForm.admin_code || null;
+                if (this.authMode === 'login') {
+                    await this.login();
+                } else {
+                    await this.register();
                 }
-
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(data.detail || '认证失败');
-                }
-
-                this.token = data.access_token;
-                this.currentUser = { username: data.username, role: data.role };
-                localStorage.setItem('accessToken', this.token);
-                this.authForm.password = '';
-                this.authForm.admin_code = '';
-                this.messages = [];
-                this.sessionId = 'session_' + Date.now();
-                this.activeNav = 'newChat';
             } catch (error) {
-                alert(error.message);
+                this.authError = error.message;
             } finally {
                 this.authLoading = false;
             }
         },
 
-        handleLogout() {
-            this.token = '';
+        logout(message = '') {
+            // Clear token and local user state, then return to the login screen.
+            this.clearToken();
             this.currentUser = null;
             this.messages = [];
             this.sessions = [];
             this.documents = [];
             this.activeNav = 'newChat';
             this.showHistorySidebar = false;
-            localStorage.removeItem('accessToken');
+            this.authError = message;
+            this.authNotice = '';
+        },
+
+        handleLogout() {
+            // UI logout button handler.
+            this.logout();
+        },
+
+        switchAuthMode() {
+            // Switch between login/register forms and clear transient messages.
+            this.authMode = this.authMode === 'login' ? 'register' : 'login';
+            this.authError = '';
+            this.authNotice = '';
         },
 
         handleCompositionStart() {
@@ -189,10 +270,7 @@ createApp({
         },
 
         async handleSend() {
-            if (!this.isAuthenticated) {
-                alert('请先登录');
-                return;
-            }
+            if (!this.requireAuth()) return;
 
             const text = this.userInput.trim();
             if (!text || this.isLoading || this.isComposing) return;
