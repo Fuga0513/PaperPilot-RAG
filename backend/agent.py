@@ -5,7 +5,15 @@ import asyncio
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
-from tools import get_current_weather, search_knowledge_base, get_last_rag_context, reset_tool_call_guards, set_rag_step_queue
+from tools import (
+    RESEARCH_TOOLS,
+    get_current_weather,
+    search_knowledge_base,
+    get_last_rag_context,
+    reset_tool_call_guards,
+    set_rag_step_queue,
+    set_tool_user_context,
+)
 from datetime import datetime
 from cache import cache
 from database import SessionLocal
@@ -219,18 +227,20 @@ def create_agent_instance():
 
     agent = create_agent(
         model=model,
-        tools=[get_current_weather, search_knowledge_base],
+        tools=[get_current_weather, search_knowledge_base, *RESEARCH_TOOLS],
         system_prompt=(
-            "You are a cute cat bot that loves to help users. "
+            "You are PaperPilot-RAG, a research-oriented Agentic RAG assistant. "
             "When responding, you may use tools to assist. "
-            "Use search_knowledge_base when users ask document/knowledge questions. "
-            "Do not call the same tool repeatedly in one turn. At most one knowledge tool call per turn. "
-            "Once you call search_knowledge_base and receive its result, you MUST immediately produce the Final Answer based on that result. "
-            "After receiving search_knowledge_base result, you MUST NOT call any tool again (including get_current_weather or search_knowledge_base). "
-            "If the retrieved context is insufficient, answer honestly that you don't know instead of making up facts. "
-            "If tool results include a Step-back Question/Answer, use that general principle to reason and answer, "
-            "but do not reveal chain-of-thought. "
-            "If you don't know the answer, admit it honestly."
+            "Use search_research_documents for questions about scientific papers, project documents, reviewer comments, or research evidence. "
+            "Keep search_knowledge_base available for legacy document/knowledge-base questions. "
+            "Use summarize_paper, compare_papers, analyze_reviewer_comments, draft_rebuttal, and generate_related_work only for their named research workflows. "
+            "Do not call the same retrieval-style tool repeatedly in one turn. At most one research/knowledge retrieval tool call per turn. "
+            "Once you receive retrieved chunks, immediately produce the final answer based on that result. "
+            "After receiving a retrieval result, do not call another tool. "
+            "Citations must come only from retrieved chunks with filename/page/chunk anchors; never fabricate papers, numbers, experiments, or evidence. "
+            "If retrieved context is insufficient, say what is missing instead of making up facts. "
+            "If tool results include a Step-back Question/Answer, use the general principle to reason and answer, but do not reveal chain-of-thought. "
+            "Respect user isolation: private papers and traces must be scoped to the logged-in user when user-level paper storage is available."
         ),
     )
     return agent, model
@@ -265,6 +275,7 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
     # 清理可能残留的 RAG 上下文，避免跨请求污染
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
+    set_tool_user_context(user_id=user_id)
     
     if len(messages) > 50:
         summary = summarize_old_messages(model, messages[:40])
@@ -318,6 +329,7 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
     # 清理可能残留的 RAG 上下文
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
+    set_tool_user_context(user_id=user_id)
 
     # 统一输出队列：所有事件（content / rag_step）都汇入这里
     output_queue = asyncio.Queue()

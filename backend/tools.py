@@ -1,11 +1,22 @@
+"""LangChain tools for SuperMew/PaperPilot.
+
+This module is the boundary between the Agent and the custom RAG pipeline. Tool
+functions may be selected by LangChain, but retrieval itself stays in
+rag_pipeline/rag_utils so Milvus hybrid search, BM25, RRF, rerank, auto-merging,
+RAG trace, and SSE step events remain under our control.
+"""
+
 from typing import Optional
 import os
 import requests
+
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
 try:
-    from langchain_core.tools import tool
+    from langchain_core.tools import StructuredTool, tool
 except ImportError:
-    from langchain_core.tools import tool
+    from langchain_core.tools import StructuredTool, tool
 
 load_dotenv()
 
@@ -14,17 +25,74 @@ AMAP_API_KEY = os.getenv("AMAP_API_KEY")
 
 _LAST_RAG_CONTEXT = None
 _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
-_RAG_STEP_QUEUE = None  # asyncio.Queue, set by agent before streaming
-_RAG_STEP_LOOP = None   # asyncio loop, captured when setting queue
+_RAG_STEP_QUEUE = None
+_RAG_STEP_LOOP = None
+_CURRENT_TOOL_USER_CONTEXT = None
 
 
-def _set_last_rag_context(context: dict):
+class ResearchSearchInput(BaseModel):
+    """Input schema for PaperPilot document search."""
+
+    query: str = Field(..., description="Natural-language research question or retrieval query.")
+
+
+class PaperIdInput(BaseModel):
+    """Input schema for tools that target one uploaded paper."""
+
+    paper_id: str = Field(..., description="Stable paper id or filename. Future stages will map this to Paper.id.")
+    question: str = Field("", description="Optional focus question for the paper summary.")
+
+
+class ComparePapersInput(BaseModel):
+    """Input schema for multi-paper comparison."""
+
+    paper_ids: list[str] = Field(..., description="Paper ids or filenames to compare.")
+    comparison_focus: str = Field("", description="Aspect to compare, such as method, dataset, results, or limitations.")
+
+
+class ReviewerCommentsInput(BaseModel):
+    """Input schema for reviewer-comment analysis."""
+
+    comments: str = Field(..., description="Reviewer comments or decision letter text.")
+    paper_id: str = Field("", description="Optional paper id or filename associated with the comments.")
+
+
+class DraftRebuttalInput(BaseModel):
+    """Input schema for rebuttal drafting."""
+
+    comments: str = Field(..., description="Reviewer comments to respond to.")
+    evidence_query: str = Field("", description="Optional retrieval query for evidence from uploaded papers or project docs.")
+
+
+class RelatedWorkInput(BaseModel):
+    """Input schema for related-work generation."""
+
+    topic: str = Field(..., description="Research topic or claim for the related-work section.")
+    constraints: str = Field("", description="Optional scope, venue, time range, or style constraints.")
+
+
+def set_tool_user_context(user_id: str | None, role: str | None = None) -> None:
+    """Set the current request user context for future retrieval filters.
+
+    Stage 5 only reserves this boundary. Once Paper/PaperChunk are user-owned,
+    this user_id must be propagated into Milvus and PostgreSQL filters.
+    """
+    global _CURRENT_TOOL_USER_CONTEXT
+    _CURRENT_TOOL_USER_CONTEXT = {"user_id": user_id, "role": role}
+
+
+def get_tool_user_context() -> Optional[dict]:
+    """Return the current request context reserved for tool-side filtering."""
+    return _CURRENT_TOOL_USER_CONTEXT
+
+
+def _set_last_rag_context(context: dict) -> None:
     global _LAST_RAG_CONTEXT
     _LAST_RAG_CONTEXT = context
 
 
 def get_last_rag_context(clear: bool = True) -> Optional[dict]:
-    """获取最近一次 RAG 检索上下文，默认读取后清空。"""
+    """Return the latest RAG trace context captured by a retrieval tool."""
     global _LAST_RAG_CONTEXT
     context = _LAST_RAG_CONTEXT
     if clear:
@@ -32,18 +100,19 @@ def get_last_rag_context(clear: bool = True) -> Optional[dict]:
     return context
 
 
-def reset_tool_call_guards():
-    """每轮对话开始时重置工具调用计数。"""
+def reset_tool_call_guards() -> None:
+    """Reset per-turn retrieval guard counters."""
     global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
     _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
 
 
-def set_rag_step_queue(queue):
-    """设置 RAG 步骤队列，并捕获当前事件循环以便跨线程调度。"""
+def set_rag_step_queue(queue) -> None:
+    """Set the queue used by rag_pipeline to push live RAG step events."""
     global _RAG_STEP_QUEUE, _RAG_STEP_LOOP
     _RAG_STEP_QUEUE = queue
     if queue:
         import asyncio
+
         try:
             _RAG_STEP_LOOP = asyncio.get_running_loop()
         except RuntimeError:
@@ -52,27 +121,84 @@ def set_rag_step_queue(queue):
         _RAG_STEP_LOOP = None
 
 
-def emit_rag_step(icon: str, label: str, detail: str = ""):
-    """向队列发送一个 RAG 检索步骤。支持跨线程安全调用。"""
-    global _RAG_STEP_QUEUE, _RAG_STEP_LOOP
-    if _RAG_STEP_QUEUE is not None and _RAG_STEP_LOOP is not None:
-        step = {"icon": icon, "label": label, "detail": detail}
-        try:
-            if not _RAG_STEP_LOOP.is_closed():
-                _RAG_STEP_LOOP.call_soon_threadsafe(_RAG_STEP_QUEUE.put_nowait, step)
-        except Exception:
-            pass
+def emit_rag_step(icon: str, label: str, detail: str = "") -> None:
+    """Push one RAG progress step from sync tools into the async SSE stream."""
+    if _RAG_STEP_QUEUE is None or _RAG_STEP_LOOP is None:
+        return
+    step = {"icon": icon, "label": label, "detail": detail}
+    try:
+        if not _RAG_STEP_LOOP.is_closed():
+            _RAG_STEP_LOOP.call_soon_threadsafe(_RAG_STEP_QUEUE.put_nowait, step)
+    except Exception:
+        pass
+
+
+def _acquire_research_search_slot(tool_name: str) -> Optional[str]:
+    """Allow at most one retrieval-style tool call in a single Agent turn."""
+    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
+    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= 1:
+        return (
+            f"TOOL_CALL_LIMIT_REACHED: {tool_name} or another retrieval tool has already "
+            "been called once in this turn. Use the existing retrieval result and provide "
+            "the final answer directly."
+        )
+    _KNOWLEDGE_TOOL_CALLS_THIS_TURN += 1
+    return None
+
+
+def _format_retrieved_chunks(docs: list[dict]) -> str:
+    """Format retrieved chunks for the Agent while preserving citation anchors."""
+    formatted = []
+    for i, result in enumerate(docs, 1):
+        source = result.get("filename", "Unknown")
+        page = result.get("page_number", "N/A")
+        text = result.get("text", "")
+        chunk_id = result.get("chunk_id", "")
+        formatted.append(f"[{i}] {source} (Page {page}, Chunk {chunk_id}):\n{text}")
+    return "Retrieved Chunks:\n" + "\n\n---\n\n".join(formatted)
+
+
+def _run_research_rag_search(query: str, tool_name: str) -> str:
+    """Run the existing custom RAG graph for a research search tool."""
+    limit_message = _acquire_research_search_slot(tool_name)
+    if limit_message:
+        return limit_message
+
+    user_context = get_tool_user_context()
+    # TODO(user-scope): after Paper/PaperChunk models exist, pass
+    # user_context["user_id"] into run_rag_graph -> retrieve_documents ->
+    # Milvus filter_expr and ParentChunkStore lookup. Until then, the existing
+    # KB remains global/admin-oriented and must not be treated as private paper
+    # retrieval.
+    _ = user_context
+
+    from rag_pipeline import run_rag_graph
+
+    rag_result = run_rag_graph(query)
+    docs = rag_result.get("docs", []) if isinstance(rag_result, dict) else []
+    rag_trace = rag_result.get("rag_trace", {}) if isinstance(rag_result, dict) else {}
+    if rag_trace:
+        rag_trace.setdefault("tool_name", tool_name)
+        rag_trace.setdefault("user_context_reserved", bool(user_context))
+        _set_last_rag_context({"rag_trace": rag_trace})
+
+    if not docs:
+        return "No relevant documents found. Do not invent citations or evidence."
+
+    return _format_retrieved_chunks(docs)
 
 
 def get_current_weather(location: str, extensions: Optional[str] = "base") -> str:
-    """获取天气信息"""
-    if not location:
-        return "location参数不能为空"
-    if extensions not in ("base", "all"):
-        return "extensions参数错误，请输入base或all"
+    """Get weather information from AMap.
 
+    This legacy SuperMew tool is kept for compatibility.
+    """
+    if not location:
+        return "location cannot be empty."
+    if extensions not in ("base", "all"):
+        return "extensions must be 'base' or 'all'."
     if not AMAP_WEATHER_API or not AMAP_API_KEY:
-        return "天气服务未配置（缺少 AMAP_WEATHER_API 或 AMAP_API_KEY）"
+        return "Weather service is not configured; missing AMAP_WEATHER_API or AMAP_API_KEY."
 
     params = {
         "key": AMAP_API_KEY,
@@ -80,88 +206,196 @@ def get_current_weather(location: str, extensions: Optional[str] = "base") -> st
         "extensions": extensions,
         "output": "json",
     }
-
     try:
         resp = requests.get(AMAP_WEATHER_API, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") != "1":
-            return f"查询失败：{data.get('info', '未知错误')}"
+            return f"Weather query failed: {data.get('info', 'unknown error')}"
 
         if extensions == "base":
             lives = data.get("lives", [])
             if not lives:
-                return f"未查询到 {location} 的天气数据"
+                return f"No weather data found for {location}."
             w = lives[0]
             return (
-                f"【{w.get('city', location)} 实时天气】\n"
-                f"天气状况：{w.get('weather', '未知')}\n"
-                f"温度：{w.get('temperature', '未知')}℃\n"
-                f"湿度：{w.get('humidity', '未知')}%\n"
-                f"风向：{w.get('winddirection', '未知')}\n"
-                f"风力：{w.get('windpower', '未知')}级\n"
-                f"更新时间：{w.get('reporttime', '未知')}"
+                f"{w.get('city', location)} realtime weather\n"
+                f"Weather: {w.get('weather', 'unknown')}\n"
+                f"Temperature: {w.get('temperature', 'unknown')} C\n"
+                f"Humidity: {w.get('humidity', 'unknown')}%\n"
+                f"Wind: {w.get('winddirection', 'unknown')} {w.get('windpower', 'unknown')}\n"
+                f"Updated: {w.get('reporttime', 'unknown')}"
             )
 
         forecasts = data.get("forecasts", [])
         if not forecasts:
-            return f"未查询到 {location} 的天气预报数据"
+            return f"No weather forecast found for {location}."
         f0 = forecasts[0]
-        out = [f"【{f0.get('city', location)} 天气预报】", f"更新时间：{f0.get('reporttime', '未知')}", ""]
-        today = (f0.get("casts") or [])[0] if f0.get("casts") else {}
-        out += [
-            "今日天气：",
-            f"  白天：{today.get('dayweather','未知')}",
-            f"  夜间：{today.get('nightweather','未知')}",
-            f"  气温：{today.get('nighttemp','未知')}~{today.get('daytemp','未知')}℃",
-        ]
-        return "\n".join(out)
-
+        casts = f0.get("casts") or []
+        today = casts[0] if casts else {}
+        return (
+            f"{f0.get('city', location)} weather forecast\n"
+            f"Updated: {f0.get('reporttime', 'unknown')}\n"
+            f"Today: {today.get('dayweather', 'unknown')} / {today.get('nightweather', 'unknown')}\n"
+            f"Temperature: {today.get('nighttemp', 'unknown')}~{today.get('daytemp', 'unknown')} C"
+        )
     except requests.exceptions.Timeout:
-        return "错误：请求天气服务超时"
+        return "Weather service request timed out."
     except requests.exceptions.RequestException as e:
-        return f"错误：天气服务请求失败 - {e}"
+        return f"Weather service request failed: {e}"
     except Exception as e:
-        return f"错误：解析天气数据失败 - {e}"
+        return f"Weather data parsing failed: {e}"
 
 
 @tool("search_knowledge_base")
 def search_knowledge_base(query: str) -> str:
-    """Search for information in the knowledge base using hybrid retrieval (dense + sparse vectors)."""
-    # ... guards omitted ...
-    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
-    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= 1:
-        return (
-            "TOOL_CALL_LIMIT_REACHED: search_knowledge_base has already been called once in this turn. "
-            "Use the existing retrieval result and provide the final answer directly."
-        )
-    _KNOWLEDGE_TOOL_CALLS_THIS_TURN += 1
+    """Search the existing knowledge base with the custom RAG pipeline.
 
-    from rag_pipeline import run_rag_graph
+    Use for legacy document/knowledge questions. Input: query string. Output:
+    numbered retrieved chunks with filename, page, chunk id, and text. The final
+    answer must cite only these chunks and must not fabricate evidence.
+    """
+    return _run_research_rag_search(query=query, tool_name="search_knowledge_base")
 
-    # 在同步工具中获取当前的 Loop 可能不可靠，但我们之前是通过 call_soon_threadsafe 调度的。
-    # 这里 _RAG_STEP_QUEUE 是在主线程/Loop 设置的全局变量。
-    # 如果工具运行在线程池中，它是可以访问到全局变量 _RAG_STEP_QUEUE 的。
-    # emit_rag_step 内部做了 try-except 和 get_event_loop()。
 
-    # 问题可能出在 asyncio.get_event_loop() 在子线程中调用会报错或者拿不到主线程的loop。
-    # 我们应该在 set_rag_step_queue 时也保存 loop 引用，或者在 emit_rag_step 中更健壮地获取 loop。
+def _search_research_documents(query: str) -> str:
+    """Search research papers, project docs, reviews, and notes."""
+    return _run_research_rag_search(query=query, tool_name="search_research_documents")
 
-    rag_result = run_rag_graph(query)
 
-    docs = rag_result.get("docs", []) if isinstance(rag_result, dict) else []
-    rag_trace = rag_result.get("rag_trace", {}) if isinstance(rag_result, dict) else {}
-    if rag_trace:
-        _set_last_rag_context({"rag_trace": rag_trace})
+def _summarize_paper(paper_id: str, question: str = "") -> str:
+    """Skeleton for single-paper summarization with retrieval-backed citations."""
+    focus = question.strip() or "summarize the problem, method, experiments, results, and limitations"
+    query = f"paper:{paper_id} {focus}".strip()
+    # TODO(paper-model): after Paper.owner_id and PaperChunk.paper_id exist, filter
+    # retrieval by current user_id + paper_id instead of relying on filename text.
+    return (
+        "summarize_paper is a PaperPilot research-tool skeleton. For now it runs "
+        "the existing retrieval pipeline as supporting evidence.\n\n"
+        + _run_research_rag_search(query=query, tool_name="summarize_paper")
+    )
 
-    if not docs:
-        return "No relevant documents found in the knowledge base."
 
-    formatted = []
-    for i, result in enumerate(docs, 1):
-        source = result.get("filename", "Unknown")
-        page = result.get("page_number", "N/A")
-        text = result.get("text", "")
-        formatted.append(f"[{i}] {source} (Page {page}):\n{text}")
+def _compare_papers(paper_ids: list[str], comparison_focus: str = "") -> str:
+    """Skeleton for multi-paper comparison."""
+    return (
+        "compare_papers is not fully implemented in stage 5. Expected output will be "
+        "a citation-backed comparison table covering methods, datasets, results, "
+        "limitations, and open questions. It must only cite chunks retrieved from the "
+        "current user's papers.\n"
+        f"Received paper_ids={paper_ids}, comparison_focus={comparison_focus!r}."
+    )
 
-    return "Retrieved Chunks:\n" + "\n\n---\n\n".join(formatted)
+
+def _analyze_reviewer_comments(comments: str, paper_id: str = "") -> str:
+    """Skeleton for reviewer-comment analysis."""
+    return (
+        "analyze_reviewer_comments is not fully implemented in stage 5. Expected output "
+        "will group reviewer concerns, severity, required evidence, and response plan. "
+        "Any factual claim about the paper must cite retrieved chunks.\n"
+        f"Received paper_id={paper_id!r}, comments_preview={comments[:500]!r}."
+    )
+
+
+def _draft_rebuttal(comments: str, evidence_query: str = "") -> str:
+    """Skeleton for rebuttal drafting."""
+    return (
+        "draft_rebuttal is not fully implemented in stage 5. Expected output will draft "
+        "polite, evidence-backed rebuttal paragraphs. It must not invent experiments, "
+        "numbers, or citations; evidence must come from retrieved chunks.\n"
+        f"Received evidence_query={evidence_query!r}, comments_preview={comments[:500]!r}."
+    )
+
+
+def _generate_related_work(topic: str, constraints: str = "") -> str:
+    """Skeleton for related-work generation."""
+    return (
+        "generate_related_work is not fully implemented in stage 5. Expected output will "
+        "produce a related-work outline or draft grounded in retrieved papers. It must "
+        "cite only retrieved chunks and clearly mark gaps when evidence is missing.\n"
+        f"Received topic={topic!r}, constraints={constraints!r}."
+    )
+
+
+search_research_documents = StructuredTool.from_function(
+    func=_search_research_documents,
+    name="search_research_documents",
+    args_schema=ResearchSearchInput,
+    description=(
+        "Use for searching scientific papers, project documents, reviewer comments, "
+        "and research notes. Input: {'query': string}. Output: numbered retrieved "
+        "chunks with filename, page, chunk id, and text. Retrieval is performed by "
+        "the existing custom RAG pipeline, not a LangChain black-box retriever. Do "
+        "not invent evidence; final citations must come only from retrieved chunks."
+    ),
+)
+
+summarize_paper = StructuredTool.from_function(
+    func=_summarize_paper,
+    name="summarize_paper",
+    args_schema=PaperIdInput,
+    description=(
+        "Use for summarizing one uploaded paper. Input: {'paper_id': string, "
+        "'question': optional string}. Stage 5 output is a skeleton plus any "
+        "retrieved evidence from the existing RAG pipeline. Do not invent claims; "
+        "citations must come from retrieved chunks."
+    ),
+)
+
+compare_papers = StructuredTool.from_function(
+    func=_compare_papers,
+    name="compare_papers",
+    args_schema=ComparePapersInput,
+    description=(
+        "Use for comparing multiple papers. Input: {'paper_ids': list[string], "
+        "'comparison_focus': optional string}. Stage 5 output is a not-implemented "
+        "skeleton. Future output must be a citation-backed comparison; never invent "
+        "evidence and cite only retrieved chunks."
+    ),
+)
+
+analyze_reviewer_comments = StructuredTool.from_function(
+    func=_analyze_reviewer_comments,
+    name="analyze_reviewer_comments",
+    args_schema=ReviewerCommentsInput,
+    description=(
+        "Use for analyzing reviewer comments or decision letters. Input: {'comments': "
+        "string, 'paper_id': optional string}. Stage 5 output is a skeleton that "
+        "classifies concerns and plans evidence needs. Do not invent paper details; "
+        "citations must come from retrieved chunks."
+    ),
+)
+
+draft_rebuttal = StructuredTool.from_function(
+    func=_draft_rebuttal,
+    name="draft_rebuttal",
+    args_schema=DraftRebuttalInput,
+    description=(
+        "Use for drafting rebuttal responses to reviewers. Input: {'comments': string, "
+        "'evidence_query': optional string}. Stage 5 output is a skeleton. Future "
+        "drafts must be grounded in retrieved evidence, with no fabricated experiments, "
+        "numbers, or citations."
+    ),
+)
+
+generate_related_work = StructuredTool.from_function(
+    func=_generate_related_work,
+    name="generate_related_work",
+    args_schema=RelatedWorkInput,
+    description=(
+        "Use for generating a related-work outline or draft. Input: {'topic': string, "
+        "'constraints': optional string}. Stage 5 output is a skeleton. Future output "
+        "must cite retrieved paper chunks only and explicitly state when evidence is "
+        "missing."
+    ),
+)
+
+
+RESEARCH_TOOLS = [
+    search_research_documents,
+    summarize_paper,
+    compare_papers,
+    analyze_reviewer_comments,
+    draft_rebuttal,
+    generate_related_work,
+]
