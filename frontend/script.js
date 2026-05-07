@@ -539,10 +539,9 @@ createApp({
             this.uploadSteps = [];
             try {
                 const paper = await this.uploadPaperFile(this.selectedFile);
-                this.uploadProgress = paper.status === 'failed'
-                    ? 'Paper uploaded, but parsing failed. Check the library status.'
-                    : 'Paper uploaded and parsed successfully.';
+                this.uploadProgress = this.paperUploadResultMessage(paper.status);
                 if (paper.status === 'failed') this.showError(this.uploadProgress);
+                if (paper.status === 'metadata_failed') this.showError(this.uploadProgress);
                 this.selectedFile = null;
                 if (this.$refs.fileInput) this.$refs.fileInput.value = '';
                 await this.loadPapers();
@@ -881,6 +880,23 @@ createApp({
             if (lower.endsWith('.docx')) return 'fas fa-file-word';
             if (lower.endsWith('.txt')) return 'fas fa-file-lines';
             return 'fas fa-file';
+        },
+
+        paperUploadResultMessage(status) {
+            if (status === 'failed') return 'Paper uploaded, but parsing failed. Check the library status.';
+            if (status === 'metadata_failed') return 'Paper parsed, but metadata extraction failed.';
+            return 'Paper uploaded, parsed, and metadata extraction finished.';
+        },
+
+        formatMetadataValue(value) {
+            if (!value) return 'Not available yet.';
+            try {
+                const parsed = JSON.parse(value);
+                if (Array.isArray(parsed)) return parsed.length ? parsed.join('; ') : 'Not available yet.';
+            } catch (error) {
+                // Plain strings are expected for scalar metadata fields.
+            }
+            return value || 'Not available yet.';
         },
 
         formatDate(value) {

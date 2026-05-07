@@ -181,8 +181,20 @@
                                         </dl>
                                         <div class="metadata-box">
                                             <strong>Metadata</strong>
-                                            <p v-if="!(selectedPaperDetail && selectedPaperDetail.metadata)">Metadata not available yet.</p>
-                                            <pre v-else>{{ selectedPaperDetail.metadata.raw_json }}</pre>
+                                            <p v-if="(selectedPaperDetail || selectedPaper).status === 'metadata_failed'">Metadata extraction failed.</p>
+                                            <p v-else-if="!(selectedPaperDetail && selectedPaperDetail.metadata)">Metadata not available yet.</p>
+                                            <dl v-else class="metadata-detail-list">
+                                                <dt>Contributions</dt>
+                                                <dd>{{ formatMetadataValue(selectedPaperDetail.metadata.contributions) }}</dd>
+                                                <dt>Method Modules</dt>
+                                                <dd>{{ formatMetadataValue(selectedPaperDetail.metadata.method_modules) }}</dd>
+                                                <dt>Datasets</dt>
+                                                <dd>{{ formatMetadataValue(selectedPaperDetail.metadata.datasets) }}</dd>
+                                                <dt>Metrics</dt>
+                                                <dd>{{ formatMetadataValue(selectedPaperDetail.metadata.metrics) }}</dd>
+                                                <dt>Limitations</dt>
+                                                <dd>{{ formatMetadataValue(selectedPaperDetail.metadata.limitations) }}</dd>
+                                            </dl>
                                         </div>
                                     </template>
                                 </aside>

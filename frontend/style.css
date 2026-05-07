@@ -440,6 +440,10 @@ textarea:disabled {
     color: var(--muted);
 }
 
+.metadata-detail-list {
+    margin-top: 10px;
+}
+
 .paper-item,
 .session-item {
     width: 100%;

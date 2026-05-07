@@ -143,6 +143,7 @@ class ResearchPaperParser:
 
     def _clean_page_text(self, text: str) -> str:
         """Merge PDF line breaks while preserving captions, references, and formulas."""
+        text = self._strip_unsafe_db_chars(text)
         text = text.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
         raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.split("\n")]
         lines = [line for line in raw_lines if line]
@@ -330,3 +331,11 @@ class ResearchPaperParser:
     def _build_chunk_id(filename: str, paper_id: int, section_idx: int, level: int, *indexes: int) -> str:
         index_path = ".".join(str(index) for index in indexes)
         return f"paper:{paper_id}:{filename}:s{section_idx}:l{level}:{index_path}"
+
+    @staticmethod
+    def _strip_unsafe_db_chars(text: str) -> str:
+        """Remove NUL and unsupported control characters before DB persistence."""
+        if not text:
+            return ""
+        text = text.replace("\x00", "")
+        return "".join(char for char in text if char in ("\n", "\t") or ord(char) >= 32)

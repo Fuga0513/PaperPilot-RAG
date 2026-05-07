@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_db
 from models import Paper, PaperChunk, PaperMetadata, User
+from paper_metadata_extractor import extract_and_store_metadata
 from paper_parser import ResearchPaperParser
 from schemas import (
     PaperChunkOut,
@@ -39,6 +40,13 @@ paper_parser = ResearchPaperParser()
 def _dt(value) -> str:
     """Serialize nullable datetimes for API responses."""
     return value.isoformat() if value else ""
+
+
+def _db_text(value) -> str:
+    """Normalize text before inserting into PostgreSQL Text/Varchar columns."""
+    text = str(value or "")
+    text = text.replace("\x00", "")
+    return "".join(char for char in text if char in ("\n", "\t") or ord(char) >= 32)
 
 
 def _safe_filename(filename: str) -> str:
@@ -193,17 +201,17 @@ def _store_parsed_chunks(db: Session, paper: Paper, chunks: list[dict]) -> int:
         PaperChunk(
             paper_id=paper.id,
             owner_id=paper.owner_id,
-            chunk_id=item["chunk_id"],
-            paper_title=item.get("paper_title", ""),
-            section_title=item.get("section_title") or "Unknown",
-            subsection_title=item.get("subsection_title") or "",
+            chunk_id=_db_text(item["chunk_id"]),
+            paper_title=_db_text(item.get("paper_title", "")),
+            section_title=_db_text(item.get("section_title") or "Unknown"),
+            subsection_title=_db_text(item.get("subsection_title") or ""),
             page_start=item.get("page_start"),
             page_end=item.get("page_end"),
             chunk_level=int(item.get("chunk_level") or 1),
-            parent_chunk_id=item.get("parent_chunk_id") or "",
-            root_chunk_id=item.get("root_chunk_id") or "",
-            chunk_type=item.get("chunk_type") or "unknown",
-            text=item.get("text") or "",
+            parent_chunk_id=_db_text(item.get("parent_chunk_id") or ""),
+            root_chunk_id=_db_text(item.get("root_chunk_id") or ""),
+            chunk_type=_db_text(item.get("chunk_type") or "unknown"),
+            text=_db_text(item.get("text") or ""),
         )
         for item in chunks
         if item.get("text")
@@ -224,6 +232,27 @@ def _parse_and_index_paper_chunks(db: Session, paper: Paper) -> int:
     if not chunks:
         raise ValueError("No chunks were generated from the uploaded paper")
     return _store_parsed_chunks(db, paper, chunks)
+
+
+def _extract_metadata_after_parse(db: Session, paper: Paper) -> bool:
+    """Try metadata extraction without invalidating parsed chunks on failure."""
+    try:
+        extract_and_store_metadata(db, paper)
+        paper.status = "parsed"
+        paper.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(paper)
+        return True
+    except Exception:
+        db.rollback()
+        paper = db.query(Paper).filter(Paper.id == paper.id, Paper.owner_id == paper.owner_id).first()
+        if paper:
+            paper.status = "metadata_failed"
+            paper.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(paper)
+        logger.exception("Failed to extract metadata for paper_id=%s", paper.id if paper else None)
+        return False
 
 
 @router.get("", response_model=list[PaperOut])
@@ -286,6 +315,8 @@ async def upload_paper(
             paper.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(paper)
+            _extract_metadata_after_parse(db, paper)
+            db.refresh(paper)
         except Exception as parse_exc:
             db.rollback()
             paper = db.query(Paper).filter(Paper.id == paper.id, Paper.owner_id == current_user.id).first()
@@ -296,8 +327,12 @@ async def upload_paper(
                 db.refresh(paper)
             logger.exception("Failed to parse uploaded paper_id=%s user_id=%s", paper.id if paper else None, current_user.id)
 
+        metadata = db.query(PaperMetadata).filter(
+            PaperMetadata.paper_id == paper.id,
+            PaperMetadata.owner_id == current_user.id,
+        ).first()
         base = _paper_to_out(paper).model_dump()
-        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=None)
+        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=_metadata_to_out(metadata))
     except HTTPException:
         raise
     except Exception as exc:
@@ -359,9 +394,15 @@ async def parse_paper(
         paper.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(paper)
+        _extract_metadata_after_parse(db, paper)
+        db.refresh(paper)
 
         base = _paper_to_out(paper).model_dump()
-        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=None)
+        metadata = db.query(PaperMetadata).filter(
+            PaperMetadata.paper_id == paper.id,
+            PaperMetadata.owner_id == current_user.id,
+        ).first()
+        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=_metadata_to_out(metadata))
     except HTTPException:
         raise
     except Exception as exc:
