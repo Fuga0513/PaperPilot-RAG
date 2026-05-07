@@ -21,6 +21,7 @@ from paper_metadata_extractor import extract_and_store_metadata
 from paper_parser import ResearchPaperParser
 from paper_comparison import compare_user_papers
 from paper_rebuttal import analyze_review_comments, draft_rebuttal
+from paper_writing import run_research_writing_task
 from schemas import (
     ComparePapersRequest,
     ComparePapersResponse,
@@ -31,6 +32,8 @@ from schemas import (
     PaperOut,
     RebuttalDraftRequest,
     RebuttalDraftResponse,
+    ResearchWritingRequest,
+    ResearchWritingResponse,
     ReviewAnalysisRequest,
     ReviewAnalysisResponse,
 )
@@ -424,6 +427,43 @@ async def draft_rebuttal_endpoint(
     except Exception as exc:
         logger.exception("Failed to draft rebuttal for user_id=%s", current_user.id)
         raise HTTPException(status_code=500, detail="Failed to draft rebuttal") from exc
+
+
+@router.post("/writing/run", response_model=ResearchWritingResponse)
+async def run_research_writing_endpoint(
+    request: ResearchWritingRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Run a current-user-scoped research writing task."""
+    try:
+        result = run_research_writing_task(
+            db,
+            current_user,
+            task_type=request.task_type,
+            topic=request.topic or "",
+            user_text=request.user_text or "",
+            paper_ids=request.paper_ids,
+            writing_style=request.writing_style or "general academic",
+            language=request.language or "en",
+        )
+        return ResearchWritingResponse(
+            evidence_based_facts=result.evidence_based_facts,
+            suggested_writing=result.suggested_writing,
+            citations=result.citations,
+            warnings=result.warnings,
+            revision_notes=result.revision_notes,
+            rag_trace=result.rag_trace,
+            tool_calls=result.tool_calls,
+        )
+    except PermissionError as exc:
+        logger.warning("Research writing denied for user_id=%s: %s", current_user.id, exc)
+        raise HTTPException(status_code=404, detail="One or more selected papers were not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to run research writing task for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to run research writing task") from exc
 
 
 @router.post("/upload", response_model=PaperDetailOut)

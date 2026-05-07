@@ -77,6 +77,17 @@ class RelatedWorkInput(BaseModel):
     constraints: str = Field("", description="Optional scope, venue, time range, or style constraints.")
 
 
+class ResearchWritingInput(BaseModel):
+    """Input schema for research writing assistance."""
+
+    task_type: str = Field(..., description="Writing task type, such as Generate Related Work or Rewrite Abstract.")
+    topic: str = Field("", description="Optional research topic or writing target.")
+    user_text: str = Field("", description="Optional draft text to polish, rewrite, or check.")
+    paper_ids: list[str | int] = Field(default_factory=list, description="Optional current-user Paper.id values.")
+    writing_style: str = Field("general academic", description="Target style, such as TMC, IWQoS, NSFC, or general academic.")
+    language: str = Field("en", description="Output language: zh or en.")
+
+
 # 用户上下文管理：记住“现在是谁在提问”
 def set_tool_user_context(user_id: str | None, role: str | None = None, owner_id: int | None = None) -> None:
     """Set the current request user context for future retrieval filters.
@@ -428,13 +439,74 @@ def _draft_rebuttal(comments: str, paper_id: str | int | None = None) -> str:
         db.close()
 
 
-def _generate_related_work(topic: str, constraints: str = "") -> str:
-    """Skeleton for related-work generation."""
+def _format_writing_tool_output(result) -> str:
+    """Format structured writing output for Agent consumption."""
+    fact_lines = "\n".join(f"- {item}" for item in result.evidence_based_facts) or "- No evidence-based facts found."
+    warning_lines = "\n".join(f"- {item}" for item in result.warnings) or "- None."
+    note_lines = "\n".join(f"- {item}" for item in result.revision_notes) or "- None."
     return (
-        "generate_related_work is not fully implemented in stage 5. Expected output will "
-        "produce a related-work outline or draft grounded in retrieved papers. It must "
-        "cite only retrieved chunks and clearly mark gaps when evidence is missing.\n"
-        f"Received topic={topic!r}, constraints={constraints!r}."
+        "## Evidence-based facts\n"
+        f"{fact_lines}\n\n"
+        "## Suggested writing\n"
+        f"{result.suggested_writing or 'No suggested writing generated.'}\n\n"
+        "## Warnings\n"
+        f"{warning_lines}\n\n"
+        "## Revision notes\n"
+        f"{note_lines}"
+    )
+
+
+def _research_writing(
+    task_type: str,
+    topic: str = "",
+    user_text: str = "",
+    paper_ids: list[str | int] | None = None,
+    writing_style: str = "general academic",
+    language: str = "en",
+) -> str:
+    """Run a current-user-scoped research writing task."""
+    limit_message = _acquire_research_search_slot("research_writing")
+    if limit_message:
+        return limit_message
+
+    db, user = _get_current_tool_user()
+    if not db or not user:
+        return "No authenticated user context is available for research writing."
+
+    from paper_writing import run_research_writing_task
+
+    try:
+        result = run_research_writing_task(
+            db,
+            user,
+            task_type=task_type,
+            topic=topic,
+            user_text=user_text,
+            paper_ids=paper_ids or [],
+            writing_style=writing_style,
+            language=language,
+        )
+        result.rag_trace["user_context_reserved"] = True
+        _set_last_rag_context({"rag_trace": result.rag_trace})
+        return _format_writing_tool_output(result)
+    except PermissionError:
+        return "One or more selected papers are not accessible to the current user."
+    except ValueError as exc:
+        return str(exc)
+    except Exception as exc:
+        return f"research_writing failed: {exc}"
+    finally:
+        db.close()
+
+
+def _generate_related_work(topic: str, constraints: str = "") -> str:
+    """Generate related work through the research writing tool."""
+    return _research_writing(
+        task_type="Generate Related Work",
+        topic=topic,
+        user_text=constraints,
+        writing_style="general academic",
+        language="en",
     )
 
 
@@ -502,15 +574,28 @@ draft_rebuttal = StructuredTool.from_function(
     ),
 )
 
+research_writing = StructuredTool.from_function(
+    func=_research_writing,
+    name="research_writing",
+    args_schema=ResearchWritingInput,
+    description=(
+        "Use for research writing tasks: Generate Related Work, Polish Contributions, "
+        "Rewrite Abstract, Check Introduction Logic, Polish Grant Scientific Question, "
+        "and Summarize Experimental Settings. Input includes task_type, optional topic, "
+        "user_text, paper_ids, writing_style, and language. Concrete paper facts must "
+        "come from current-user retrieved chunks with citations; do not invent references, "
+        "experiments, datasets, metrics, numbers, or results."
+    ),
+)
+
 generate_related_work = StructuredTool.from_function(
     func=_generate_related_work,
     name="generate_related_work",
     args_schema=RelatedWorkInput,
     description=(
         "Use for generating a related-work outline or draft. Input: {'topic': string, "
-        "'constraints': optional string}. Stage 5 output is a skeleton. Future output "
-        "must cite retrieved paper chunks only and explicitly state when evidence is "
-        "missing."
+        "'constraints': optional string}. Output is delegated to research_writing and "
+        "must cite current-user retrieved chunks only. Explicitly state when evidence is missing."
     ),
 )
 
@@ -521,5 +606,6 @@ RESEARCH_TOOLS = [
     compare_papers,
     analyze_reviewer_comments,
     draft_rebuttal,
+    research_writing,
     generate_related_work,
 ]

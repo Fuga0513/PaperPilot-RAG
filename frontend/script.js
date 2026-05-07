@@ -33,6 +33,23 @@ createApp({
             isAnalyzingReview: false,
             isDraftingRebuttal: false,
             rebuttalCopyStatus: '',
+            writingTaskTypes: [
+                'Generate Related Work',
+                'Polish Contributions',
+                'Rewrite Abstract',
+                'Check Introduction Logic',
+                'Polish Grant Scientific Question',
+                'Summarize Experimental Settings'
+            ],
+            writingTaskType: 'Generate Related Work',
+            writingTopic: '',
+            writingUserText: '',
+            writingPaperIds: [],
+            writingStyle: 'general academic',
+            writingLanguage: 'en',
+            writingResult: null,
+            isRunningWritingTask: false,
+            writingCopyStatus: '',
             isParsingPaper: false,
             isIndexingPaper: false,
             documents: [],
@@ -307,6 +324,10 @@ createApp({
             this.reviewPaperId = '';
             this.reviewPoints = [];
             this.rebuttalDraft = '';
+            this.writingTopic = '';
+            this.writingUserText = '';
+            this.writingPaperIds = [];
+            this.writingResult = null;
             this.citations = [];
             this.ragTrace = null;
             this.toolCalls = [];
@@ -388,6 +409,7 @@ createApp({
             this.clearError();
             if (panel === 'library') this.loadPapers();
             if (panel === 'reviewer') this.loadPapers();
+            if (panel === 'writing') this.loadPapers();
             if (panel === 'history') this.loadSessions();
         },
 
@@ -410,6 +432,7 @@ createApp({
                 const papers = await this.apiGet('/papers');
                 this.papers = Array.isArray(papers) ? papers : [];
                 this.selectedPaperIds = this.selectedPaperIds.filter(id => this.papers.some(paper => paper.id === id));
+                this.writingPaperIds = this.writingPaperIds.filter(id => this.papers.some(paper => paper.id === id));
                 this.syncSelectedPaperAfterRefresh();
             } catch (error) {
                 this.showError('Failed to load papers: ' + error.message);
@@ -629,6 +652,81 @@ createApp({
                 comments: this.reviewComments,
                 paper_id: paperId || null
             };
+        },
+
+        toggleWritingPaperSelection(paperId) {
+            // Toggle one paper for POST /papers/writing/run.
+            const id = Number(paperId);
+            if (!id) return;
+            if (this.writingPaperIds.includes(id)) {
+                this.writingPaperIds = this.writingPaperIds.filter(item => item !== id);
+                return;
+            }
+            this.writingPaperIds = [...this.writingPaperIds, id];
+        },
+
+        async runWritingTask() {
+            // POST /papers/writing/run and render structured writing assistance output.
+            if (!this.requireAuth() || this.isRunningWritingTask) return;
+            if (!this.writingTopic.trim() && !this.writingUserText.trim() && this.writingPaperIds.length === 0) {
+                this.showError('Please provide a topic, text, or selected papers for the writing task.');
+                return;
+            }
+            this.isRunningWritingTask = true;
+            this.clearError();
+            try {
+                const result = await this.apiPost('/papers/writing/run', this.buildWritingPayload());
+                this.renderWritingResult(result);
+            } catch (error) {
+                this.showError('Failed to run writing task: ' + error.message);
+            } finally {
+                this.isRunningWritingTask = false;
+            }
+        },
+
+        buildWritingPayload() {
+            // Build request body for the research writing API.
+            return {
+                task_type: this.writingTaskType,
+                topic: this.writingTopic,
+                user_text: this.writingUserText,
+                paper_ids: this.writingPaperIds,
+                writing_style: this.writingStyle,
+                language: this.writingLanguage
+            };
+        },
+
+        renderWritingResult(result) {
+            // Store structured writing output and sync citation/trace inspectors.
+            this.writingResult = result || null;
+            this.applyCitations(result?.citations || []);
+            this.applyRagTrace(result?.rag_trace || null);
+            this.toolCalls = result?.tool_calls || this.toolCalls;
+        },
+
+        async copyWritingResult() {
+            // Copy the combined research writing result as plain text.
+            if (!this.writingResult) return;
+            const text = [
+                'Evidence-based facts:',
+                ...(this.writingResult.evidence_based_facts || []).map(item => `- ${item}`),
+                '',
+                'Suggested writing:',
+                this.writingResult.suggested_writing || '',
+                '',
+                'Warnings:',
+                ...(this.writingResult.warnings || []).map(item => `- ${item}`),
+                '',
+                'Revision notes:',
+                ...(this.writingResult.revision_notes || []).map(item => `- ${item}`)
+            ].join('\n');
+            try {
+                await navigator.clipboard.writeText(text);
+                this.writingCopyStatus = 'Copied';
+                setTimeout(() => { this.writingCopyStatus = ''; }, 1600);
+            } catch (error) {
+                this.showError('Copy failed. Please select the result text manually.');
+            }
         },
 
         async loadDocuments() {

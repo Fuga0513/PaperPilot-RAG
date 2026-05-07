@@ -233,6 +233,7 @@ def create_agent_instance():
             "When responding, you may use tools to assist. "
             "For explicit paper comparison intents such as 比较, 对比, 区别, 相同点, 不同点, related work table, survey, or 'summarize these papers', use compare_papers first. "
             "For reviewer comments, decision letters, review analysis, response planning, or rebuttal drafting, use analyze_reviewer_comments or draft_rebuttal first. "
+            "For research writing tasks such as related work, abstract rewriting, contribution polishing, introduction logic checks, grant scientific questions, or experimental-setting summaries, use research_writing first. "
             "For other Chat with Papers, scientific paper questions, project documents, reviewer comments, research evidence, definitions from uploaded papers, summaries, or citation-backed QA, use search_research_documents. "
             "Use search_knowledge_base only when the user explicitly asks about the legacy/global knowledge base or administrator-uploaded global documents. "
             "Use summarize_paper, compare_papers, analyze_reviewer_comments, draft_rebuttal, and generate_related_work only for their named research workflows. "

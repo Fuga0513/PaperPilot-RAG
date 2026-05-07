@@ -331,3 +331,22 @@ class RebuttalDraftResponse(BaseModel):
     citations: List[CitationOut] = []
     rag_trace: Optional[RagTrace] = None
     tool_calls: Optional[List[ToolCallOut]] = None
+
+
+class ResearchWritingRequest(BaseModel):
+    task_type: str
+    topic: Optional[str] = ""
+    user_text: Optional[str] = ""
+    paper_ids: Optional[List[int]] = None
+    writing_style: Optional[str] = "general academic"
+    language: Optional[str] = "en"
+
+
+class ResearchWritingResponse(BaseModel):
+    evidence_based_facts: List[str] = []
+    suggested_writing: str
+    citations: List[CitationOut] = []
+    warnings: List[str] = []
+    revision_notes: List[str] = []
+    rag_trace: Optional[RagTrace] = None
+    tool_calls: Optional[List[ToolCallOut]] = None

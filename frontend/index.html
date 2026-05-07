@@ -96,7 +96,7 @@
                     <h3>Tools</h3>
                     <button class="tool-entry" @click="setActivePanel('library')">Paper Comparison</button>
                     <button class="tool-entry" @click="setActivePanel('reviewer')">Reviewer Analysis</button>
-                    <button class="tool-entry" disabled>Research Writing</button>
+                    <button class="tool-entry" @click="setActivePanel('writing')">Research Writing</button>
                     <button class="tool-entry" disabled>Evaluation Report</button>
                 </section>
             </aside>
@@ -377,6 +377,129 @@
                                     </div>
                                     <div v-if="!rebuttalDraft" class="empty-state compact">Draft output will appear after retrieval.</div>
                                     <div v-else class="rebuttal-draft" v-html="parseMarkdown(rebuttalDraft)"></div>
+                                </section>
+                            </div>
+                        </section>
+
+                        <section v-if="activeNav === 'writing'" class="panel writing-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <h2>Research Writing</h2>
+                                    <p>Run evidence-aware writing tasks over your private paper library.</p>
+                                </div>
+                                <button class="secondary-action" :disabled="!writingResult" @click="copyWritingResult">
+                                    <i class="fas fa-copy"></i> {{ writingCopyStatus || 'Copy Result' }}
+                                </button>
+                            </div>
+
+                            <div class="writing-layout">
+                                <section class="writing-input-box">
+                                    <label>
+                                        <span>Task Type</span>
+                                        <select v-model="writingTaskType" :disabled="isRunningWritingTask">
+                                            <option v-for="task in writingTaskTypes" :key="task" :value="task">{{ task }}</option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        <span>Topic</span>
+                                        <input
+                                            v-model="writingTopic"
+                                            type="text"
+                                            :disabled="isRunningWritingTask"
+                                            placeholder="e.g. spatio-temporal forecasting under missing observations"
+                                        >
+                                    </label>
+                                    <label>
+                                        <span>User Text</span>
+                                        <textarea
+                                            v-model="writingUserText"
+                                            rows="8"
+                                            :disabled="isRunningWritingTask"
+                                            placeholder="Paste abstract, contribution bullets, introduction draft, or grant question text."
+                                        ></textarea>
+                                    </label>
+                                    <div class="writing-controls">
+                                        <label>
+                                            <span>Style</span>
+                                            <select v-model="writingStyle" :disabled="isRunningWritingTask">
+                                                <option value="general academic">general academic</option>
+                                                <option value="TMC">TMC</option>
+                                                <option value="IWQoS">IWQoS</option>
+                                                <option value="NSFC">NSFC</option>
+                                            </select>
+                                        </label>
+                                        <label>
+                                            <span>Language</span>
+                                            <select v-model="writingLanguage" :disabled="isRunningWritingTask">
+                                                <option value="en">en</option>
+                                                <option value="zh">zh</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <div class="writing-paper-picker">
+                                        <strong>Paper Evidence</strong>
+                                        <p>Select papers when the task should use specific evidence.</p>
+                                        <div v-if="papers.length === 0" class="empty-state compact">No papers loaded.</div>
+                                        <label v-for="paper in papers" :key="paper.id" class="writing-paper-option">
+                                            <input
+                                                type="checkbox"
+                                                :checked="writingPaperIds.includes(paper.id)"
+                                                :disabled="isRunningWritingTask"
+                                                @change="toggleWritingPaperSelection(paper.id)"
+                                            >
+                                            <span>{{ formatPaperTitle(paper) }}</span>
+                                        </label>
+                                    </div>
+                                    <button
+                                        class="primary-action writing-run-action"
+                                        :disabled="isRunningWritingTask || (!writingTopic.trim() && !writingUserText.trim() && writingPaperIds.length === 0)"
+                                        @click="runWritingTask"
+                                    >
+                                        <i :class="isRunningWritingTask ? 'fas fa-spinner fa-spin' : 'fas fa-pen-to-square'"></i>
+                                        {{ isRunningWritingTask ? 'Running...' : 'Run Writing Task' }}
+                                    </button>
+                                </section>
+
+                                <section class="writing-output-box">
+                                    <div v-if="!writingResult" class="empty-state">Writing results will appear here.</div>
+                                    <template v-else>
+                                        <section class="writing-result-section">
+                                            <h3>Evidence-based Facts</h3>
+                                            <div v-if="!(writingResult.evidence_based_facts || []).length" class="empty-state compact">No evidence-based facts returned.</div>
+                                            <ul v-else>
+                                                <li v-for="(fact, index) in writingResult.evidence_based_facts" :key="'fact' + index">{{ fact }}</li>
+                                            </ul>
+                                        </section>
+                                        <section class="writing-result-section">
+                                            <h3>Suggested Writing</h3>
+                                            <div class="writing-suggested" v-html="parseMarkdown(writingResult.suggested_writing || '')"></div>
+                                        </section>
+                                        <section class="writing-result-section">
+                                            <h3>Revision Notes</h3>
+                                            <div v-if="!(writingResult.revision_notes || []).length" class="empty-state compact">No revision notes.</div>
+                                            <ul v-else>
+                                                <li v-for="(note, index) in writingResult.revision_notes" :key="'note' + index">{{ note }}</li>
+                                            </ul>
+                                        </section>
+                                        <section class="writing-result-section">
+                                            <h3>Citations</h3>
+                                            <div v-if="!(writingResult.citations || []).length" class="empty-state compact">No citations returned.</div>
+                                            <ul v-else>
+                                                <li v-for="item in writingResult.citations" :key="item.citation_id || item.chunk_id">
+                                                    <strong>{{ item.citation_id }}</strong>
+                                                    {{ item.paper_title || item.filename || 'Unknown source' }}
+                                                    <span v-if="item.section_title">- {{ item.section_title }}</span>
+                                                </li>
+                                            </ul>
+                                        </section>
+                                        <section class="writing-result-section warning-section">
+                                            <h3>Warnings</h3>
+                                            <div v-if="!(writingResult.warnings || []).length" class="empty-state compact">No warnings.</div>
+                                            <ul v-else>
+                                                <li v-for="(warning, index) in writingResult.warnings" :key="'warning' + index">{{ warning }}</li>
+                                            </ul>
+                                        </section>
+                                    </template>
                                 </section>
                             </div>
                         </section>
