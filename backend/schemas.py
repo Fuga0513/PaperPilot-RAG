@@ -163,3 +163,75 @@ class DocumentDeleteResponse(BaseModel):
     filename: str
     chunks_deleted: int
     message: str
+
+
+class PaperCreate(BaseModel):
+    filename: str
+    original_filename: Optional[str] = ""
+    title: Optional[str] = ""
+    authors: Optional[str] = ""
+    year: Optional[int] = None
+    venue: Optional[str] = ""
+    abstract: Optional[str] = ""
+    keywords: Optional[str] = ""
+    file_path: Optional[str] = ""
+    file_hash: Optional[str] = ""
+    status: Optional[str] = "uploaded"
+
+
+class PaperOut(BaseModel):
+    id: int
+    filename: str
+    original_filename: str
+    title: str
+    authors: str
+    year: Optional[int] = None
+    venue: str
+    abstract: str
+    keywords: str
+    file_hash: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class PaperChunkOut(BaseModel):
+    id: int
+    paper_id: int
+    chunk_id: str
+    section_title: str
+    subsection_title: str
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    chunk_level: int
+    parent_chunk_id: str
+    root_chunk_id: str
+    chunk_type: str
+    text: str
+    created_at: str
+
+
+class PaperMetadataOut(BaseModel):
+    id: int
+    paper_id: int
+    problem: str
+    motivation: str
+    contributions: str
+    method_modules: str
+    datasets: str
+    metrics: str
+    baselines: str
+    limitations: str
+    raw_json: str
+    created_at: str
+    updated_at: str
+
+
+class PaperDetailOut(PaperOut):
+    chunk_count: int
+    metadata: Optional[PaperMetadataOut] = None
+
+
+class PaperDeleteResponse(BaseModel):
+    paper_id: int
+    message: str

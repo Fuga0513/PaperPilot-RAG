@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 
 import api as api_module
+import paper_api as paper_api_module
 from database import init_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(api_module.router)
+    app.include_router(paper_api_module.router)
 
     # serve frontend static files at root
     if FRONTEND_DIR.exists():
