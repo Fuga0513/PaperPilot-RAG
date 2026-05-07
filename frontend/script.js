@@ -753,7 +753,9 @@ createApp({
             try {
                 const data = typeof event === 'string' ? JSON.parse(event) : event;
                 if (data.type === 'content') this.appendAssistantToken(data.content);
+                if (data.type === 'answer_delta') this.appendAssistantToken(data.content || data.delta);
                 if (data.type === 'rag_step') this.appendRagStep(data.step);
+                if (data.type === 'citations') this.applyCitations(data.citations || []);
                 if (data.type === 'trace') this.applyRagTrace(data.rag_trace);
                 if (data.type === 'error') this.appendAssistantToken(`\n[Error: ${data.content}]`);
             } catch (error) {
@@ -815,14 +817,43 @@ createApp({
         extractCitations(trace) {
             // Citations come only from real retrieved chunks in rag_trace.
             if (!trace) return [];
+            if (Array.isArray(trace.citations)) return trace.citations;
             const chunks = trace.expanded_retrieved_chunks || trace.initial_retrieved_chunks || trace.retrieved_chunks || [];
-            return chunks.map(chunk => ({
+            return chunks.map((chunk, index) => ({
+                citation_id: chunk.citation_id || `C${index + 1}`,
+                paper_id: chunk.paper_id,
+                paper_title: chunk.paper_title || chunk.filename,
                 filename: chunk.filename,
-                page_number: chunk.page_number,
-                text: (chunk.text || '').slice(0, 260),
-                rrf_rank: chunk.rrf_rank,
+                section_title: chunk.section_title || '',
+                page_start: chunk.page_start || chunk.page_number,
+                page_end: chunk.page_end || chunk.page_number,
+                chunk_id: chunk.chunk_id || '',
+                preview_text: (chunk.text || '').slice(0, 260),
+                score: chunk.score,
                 rerank_score: chunk.rerank_score
             }));
+        },
+
+        applyCitations(citations) {
+            // Store backend-returned citations; the frontend never fabricates them.
+            this.citations = Array.isArray(citations) ? citations : [];
+        },
+
+        formatCitationPages(item) {
+            if (!item) return '';
+            if (item.page_start && item.page_end && item.page_start !== item.page_end) {
+                return `Pages ${item.page_start}-${item.page_end}`;
+            }
+            const page = item.page_start || item.page_end;
+            return page ? `Page ${page}` : 'Page N/A';
+        },
+
+        async openCitationPaper(item) {
+            // Jump to Paper Detail for citations that include a current-user paper_id.
+            if (!item?.paper_id) return;
+            const paper = this.papers.find(row => row.id === item.paper_id) || { id: item.paper_id };
+            this.activeNav = 'library';
+            await this.selectPaper(paper);
         },
 
         // =========================
@@ -833,11 +864,12 @@ createApp({
             const idx = this.streamingMessageIndex;
             if (idx !== null && this.messages[idx]) this.messages[idx].ragTrace = trace;
             this.ragTrace = trace;
-            this.citations = this.extractCitations(trace);
-            this.toolCalls.unshift({
+            this.applyCitations(this.extractCitations(trace));
+            const traceToolCalls = Array.isArray(trace?.tool_calls) ? trace.tool_calls : [];
+            this.toolCalls = traceToolCalls.length ? traceToolCalls : [{
                 name: trace?.tool_name || 'search_knowledge_base',
                 detail: trace?.retrieval_stage || 'retrieval'
-            });
+            }];
         },
 
         syncInspectorFromMessages() {

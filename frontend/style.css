@@ -624,30 +624,81 @@ textarea:disabled {
 }
 
 /* Right inspector */
-.citation-list,
+.citation-card-list,
 .tool-call-list {
-    padding-left: 18px;
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
 
-.citation-list li,
-.tool-call-list li {
-    line-height: 1.45;
+.citation-card {
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-soft);
+    cursor: pointer;
 }
 
-.citation-list span,
-.tool-call-list span {
-    display: block;
+.citation-card:hover {
+    border-color: var(--primary);
+}
+
+.citation-card-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+}
+
+.citation-card-header strong {
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.citation-badge {
+    min-width: 34px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: white;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-align: center;
+}
+
+.citation-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin: 7px 0;
     color: var(--muted);
     font-size: 0.86rem;
 }
 
-.citation-list p {
+.citation-card p {
     color: var(--muted);
     font-size: 0.9rem;
-    margin-top: 4px;
+    line-height: 1.5;
+}
+
+.citation-scores {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.tool-call-list {
+    padding-left: 18px;
+}
+
+.tool-call-list li {
+    line-height: 1.45;
+}
+
+.tool-call-list span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.86rem;
 }
 
 .trace-list {

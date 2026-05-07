@@ -32,6 +32,8 @@ class ChatRequest(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
+    citation_id: Optional[str] = None
+    owner_id: Optional[int] = None
     filename: str
     page_number: Optional[str | int] = None
     text: Optional[str] = None
@@ -48,6 +50,27 @@ class RetrievedChunk(BaseModel):
     chunk_type: Optional[str] = None
     year: Optional[int] = None
     venue: Optional[str] = None
+    preview_text: Optional[str] = None
+
+
+class CitationOut(BaseModel):
+    citation_id: str
+    owner_id: Optional[int] = None
+    paper_id: Optional[int] = None
+    paper_title: Optional[str] = None
+    filename: str
+    section_title: Optional[str] = None
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    chunk_id: str
+    score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    preview_text: str
+
+
+class ToolCallOut(BaseModel):
+    name: str
+    detail: Optional[str] = None
 
 
 class RagTrace(BaseModel):
@@ -80,6 +103,8 @@ class RagTrace(BaseModel):
     auto_merge_threshold: Optional[int] = None
     auto_merge_replaced_chunks: Optional[int] = None
     auto_merge_steps: Optional[int] = None
+    citations: Optional[List[CitationOut]] = None
+    tool_calls: Optional[List[ToolCallOut]] = None
     retrieved_chunks: Optional[List[RetrievedChunk]] = None
     initial_retrieved_chunks: Optional[List[RetrievedChunk]] = None
     expanded_retrieved_chunks: Optional[List[RetrievedChunk]] = None
@@ -87,7 +112,9 @@ class RagTrace(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+    citations: Optional[List[CitationOut]] = None
     rag_trace: Optional[RagTrace] = None
+    tool_calls: Optional[List[ToolCallOut]] = None
 
 
 class MessageInfo(BaseModel):

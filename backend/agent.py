@@ -231,14 +231,15 @@ def create_agent_instance():
         system_prompt=(
             "You are PaperPilot-RAG, a research-oriented Agentic RAG assistant. "
             "When responding, you may use tools to assist. "
-            "Use search_research_documents for questions about scientific papers, project documents, reviewer comments, or research evidence. "
-            "Keep search_knowledge_base available for legacy document/knowledge-base questions. "
+            "For Chat with Papers, scientific paper questions, project documents, reviewer comments, research evidence, definitions from uploaded papers, summaries, comparisons, or citation-backed QA, use search_research_documents. "
+            "Use search_knowledge_base only when the user explicitly asks about the legacy/global knowledge base or administrator-uploaded global documents. "
             "Use summarize_paper, compare_papers, analyze_reviewer_comments, draft_rebuttal, and generate_related_work only for their named research workflows. "
             "Do not call the same retrieval-style tool repeatedly in one turn. At most one research/knowledge retrieval tool call per turn. "
             "Once you receive retrieved chunks, immediately produce the final answer based on that result. "
             "After receiving a retrieval result, do not call another tool. "
-            "Citations must come only from retrieved chunks with filename/page/chunk anchors; never fabricate papers, numbers, experiments, or evidence. "
-            "If retrieved context is insufficient, say what is missing instead of making up facts. "
+            "Use only provided evidence context when answering research questions. Key claims must cite provided ids like [C1] or [C1][C2]. "
+            "Never fabricate citation ids, papers, numbers, datasets, experiments, or evidence. "
+            "If retrieved context is insufficient, say 当前文档证据不足 and state what is missing. "
             "If tool results include a Step-back Question/Answer, use the general principle to reason and answer, but do not reveal chain-of-thought. "
             "Respect user isolation: private papers and traces must be scoped to the logged-in user when user-level paper storage is available."
         ),
@@ -314,13 +315,17 @@ def chat_with_agent(
 
     rag_context = get_last_rag_context(clear=True)
     rag_trace = rag_context.get("rag_trace") if rag_context else None
+    citations = rag_trace.get("citations", []) if rag_trace else []
+    tool_calls = rag_trace.get("tool_calls", []) if rag_trace else []
 
     extra_message_data = [None] * (len(messages) - 1) + [{"rag_trace": rag_trace}]
     storage.save(user_id, session_id, messages, extra_message_data=extra_message_data)
 
     return {
         "response": response_content,
+        "citations": citations,
         "rag_trace": rag_trace,
+        "tool_calls": tool_calls,
     }
 
 
@@ -425,10 +430,15 @@ async def chat_with_agent_stream(
     # 获取 RAG trace
     rag_context = get_last_rag_context(clear=True)
     rag_trace = rag_context.get("rag_trace") if rag_context else None
+    citations = rag_trace.get("citations", []) if rag_trace else []
+    tool_calls = rag_trace.get("tool_calls", []) if rag_trace else []
+
+    if citations:
+        yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
 
     # 发送 trace 信息
     if rag_trace:
-        yield f"data: {json.dumps({'type': 'trace', 'rag_trace': rag_trace})}\n\n"
+        yield f"data: {json.dumps({'type': 'trace', 'rag_trace': rag_trace, 'citations': citations, 'tool_calls': tool_calls})}\n\n"
 
     # 发送结束信号
     yield "data: [DONE]\n\n"

@@ -12,6 +12,7 @@ import requests
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from citation_builder import build_citations, build_evidence_context
 
 try:
     from langchain_core.tools import StructuredTool, tool
@@ -150,16 +151,18 @@ def emit_rag_step(icon: str, label: str, detail: str = "") -> None:
 
 
 # 格式化从知识库查回来的文档片段 -→ [1] 论文A.pdf (Page 5, Chunk 23)：这里是论文里的一段内容...
-def _format_retrieved_chunks(docs: list[dict]) -> str:
-    """Format retrieved chunks for the Agent while preserving citation anchors."""
-    formatted = []
-    for i, result in enumerate(docs, 1):
-        source = result.get("filename", "Unknown")
-        page = result.get("page_number", "N/A")
-        text = result.get("text", "")
-        chunk_id = result.get("chunk_id", "")
-        formatted.append(f"[{i}] {source} (Page {page}, Chunk {chunk_id}):\n{text}")
-    return "Retrieved Chunks:\n" + "\n\n---\n\n".join(formatted)
+def _format_retrieved_chunks(docs: list[dict], citations: list[dict]) -> str:
+    """Format retrieved chunks as bounded evidence with stable [C1] anchors."""
+    context = build_evidence_context(docs, citations)
+    return (
+        "Use only the evidence below to answer the user.\n"
+        "Rules:\n"
+        "- Cite key claims with the provided citation ids, such as [C1] or [C1][C2].\n"
+        "- If the evidence is insufficient, say \"当前文档证据不足\" and explain what is missing.\n"
+        "- Do not invent papers, datasets, experiments, numbers, or citation ids.\n"
+        "- Keep the answer structured and concise.\n\n"
+        f"Evidence Context:\n{context}"
+    )
 
 
 # 执行一次 RAG 检索
@@ -180,16 +183,26 @@ def _run_rag_search(query: str, tool_name: str, source_type: str = "document") -
 
     rag_result = run_rag_graph(query, owner_id=owner_id, source_type=source_type)
     docs = rag_result.get("docs", []) if isinstance(rag_result, dict) else []
+    citations = build_citations(docs, owner_id=owner_id if source_type == "paper" else None)
+    cited_ids = {item.get("citation_id") for item in citations}
+    docs = [doc for doc in docs if doc.get("citation_id") in cited_ids]
     rag_trace = rag_result.get("rag_trace", {}) if isinstance(rag_result, dict) else {}
     if rag_trace:
         rag_trace["tool_name"] = tool_name
         rag_trace["user_context_reserved"] = bool(user_context)
+        rag_trace["citations"] = citations
+        rag_trace["tool_calls"] = [{"name": tool_name, "detail": rag_trace.get("retrieval_stage") or "retrieval"}]
+        rag_trace["retrieved_chunks"] = docs
+        if rag_trace.get("retrieval_stage") == "expanded":
+            rag_trace["expanded_retrieved_chunks"] = docs
+        else:
+            rag_trace["initial_retrieved_chunks"] = docs
         _set_last_rag_context({"rag_trace": rag_trace})
 
-    if not docs:
-        return "No relevant documents found. Do not invent citations or evidence."
+    if not citations:
+        return "当前文档证据不足：No relevant accessible evidence chunks were retrieved. Do not invent citations or evidence."
 
-    return _format_retrieved_chunks(docs)
+    return _format_retrieved_chunks(docs, citations)
 
 
 def get_current_weather(location: str, extensions: Optional[str] = "base") -> str:
@@ -328,9 +341,10 @@ search_research_documents = StructuredTool.from_function(
     description=(
         "Use for searching scientific papers, project documents, reviewer comments, "
         "and research notes. Input: {'query': string}. Output: numbered retrieved "
-        "chunks with filename, page, chunk id, and text. Retrieval is performed by "
+        "evidence chunks with [C1] citation ids, filename, page, chunk id, and text. Retrieval is performed by "
         "the existing custom RAG pipeline, not a LangChain black-box retriever. Do "
-        "not invent evidence; final citations must come only from retrieved chunks."
+        "not invent evidence; final citations must come only from retrieved chunks. "
+        "Use this instead of search_knowledge_base for Chat with Papers and scientific-paper questions."
     ),
 )
 

@@ -21,6 +21,19 @@ RERANK_API_KEY = os.getenv("RERANK_API_KEY")
 AUTO_MERGE_ENABLED = os.getenv("AUTO_MERGE_ENABLED", "true").lower() != "false"
 AUTO_MERGE_THRESHOLD = int(os.getenv("AUTO_MERGE_THRESHOLD", "2"))
 LEAF_RETRIEVE_LEVEL = int(os.getenv("LEAF_RETRIEVE_LEVEL", "3"))
+PAPER_METADATA_FIELDS = [
+    "source_type",
+    "owner_id",
+    "paper_id",
+    "paper_title",
+    "section_title",
+    "subsection_title",
+    "page_start",
+    "page_end",
+    "chunk_type",
+    "year",
+    "venue",
+]
 
 # 全局初始化检索依赖（与 api 共用 embedding_service，保证 BM25 状态一致）
 _milvus_manager = MilvusManager()
@@ -58,6 +71,9 @@ def _merge_to_parent_level(docs: List[dict], threshold: int = 2) -> Tuple[List[d
             merged_docs.append(doc)
             continue
         parent_doc = dict(parent_map[parent_id])
+        for field in PAPER_METADATA_FIELDS:
+            if parent_doc.get(field) in (None, "", 0):
+                parent_doc[field] = doc.get(field, parent_doc.get(field))
         score = doc.get("score")
         if score is not None:
             parent_doc["score"] = max(float(parent_doc.get("score", score)), float(score))
