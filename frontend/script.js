@@ -26,6 +26,13 @@ createApp({
             comparisonResult: '',
             comparisonAspects: ['problem', 'method', 'contribution', 'dataset', 'metric', 'limitation'],
             isComparingPapers: false,
+            reviewComments: '',
+            reviewPaperId: '',
+            reviewPoints: [],
+            rebuttalDraft: '',
+            isAnalyzingReview: false,
+            isDraftingRebuttal: false,
+            rebuttalCopyStatus: '',
             isParsingPaper: false,
             isIndexingPaper: false,
             documents: [],
@@ -55,7 +62,7 @@ createApp({
             deletePollTimers: {},
             deleteRemoveTimers: {},
 
-            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false },
+            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false, reviewer: false, rebuttal: false },
             documentsLoading: false,
             errorMessage: ''
         };
@@ -296,6 +303,10 @@ createApp({
             this.selectedPaperDetail = null;
             this.selectedPaperIds = [];
             this.comparisonResult = '';
+            this.reviewComments = '';
+            this.reviewPaperId = '';
+            this.reviewPoints = [];
+            this.rebuttalDraft = '';
             this.citations = [];
             this.ragTrace = null;
             this.toolCalls = [];
@@ -376,6 +387,7 @@ createApp({
             this.activeNav = panel;
             this.clearError();
             if (panel === 'library') this.loadPapers();
+            if (panel === 'reviewer') this.loadPapers();
             if (panel === 'history') this.loadSessions();
         },
 
@@ -544,6 +556,79 @@ createApp({
             this.applyCitations(result?.citations || []);
             this.applyRagTrace(result?.rag_trace || null);
             this.toolCalls = result?.tool_calls || this.toolCalls;
+        },
+
+        async analyzeReviewerComments() {
+            // POST /papers/reviewer/analyze and render structured reviewer-point cards.
+            if (!this.requireAuth() || this.isAnalyzingReview) return;
+            if (!this.reviewComments.trim()) {
+                this.showError('Please paste reviewer comments first.');
+                return;
+            }
+            this.isAnalyzingReview = true;
+            this.loading.reviewer = true;
+            this.clearError();
+            try {
+                const result = await this.apiPost('/papers/reviewer/analyze', this.reviewPayload());
+                this.renderReviewPoints(result?.points || []);
+                this.rebuttalDraft = '';
+            } catch (error) {
+                this.showError('Failed to analyze reviewer comments: ' + error.message);
+            } finally {
+                this.isAnalyzingReview = false;
+                this.loading.reviewer = false;
+            }
+        },
+
+        async draftRebuttal() {
+            // POST /papers/reviewer/rebuttal and sync citations/RAG Trace with the draft.
+            if (!this.requireAuth() || this.isDraftingRebuttal) return;
+            if (!this.reviewComments.trim()) {
+                this.showError('Please paste reviewer comments first.');
+                return;
+            }
+            this.isDraftingRebuttal = true;
+            this.loading.rebuttal = true;
+            this.clearError();
+            try {
+                const result = await this.apiPost('/papers/reviewer/rebuttal', this.reviewPayload());
+                this.renderReviewPoints(result?.points || []);
+                this.rebuttalDraft = result?.response || '';
+                this.applyCitations(result?.citations || []);
+                this.applyRagTrace(result?.rag_trace || null);
+                this.toolCalls = result?.tool_calls || this.toolCalls;
+            } catch (error) {
+                this.showError('Failed to draft rebuttal: ' + error.message);
+            } finally {
+                this.isDraftingRebuttal = false;
+                this.loading.rebuttal = false;
+            }
+        },
+
+        renderReviewPoints(points) {
+            // Store normalized reviewer points returned by the backend.
+            this.reviewPoints = Array.isArray(points) ? points : [];
+        },
+
+        async copyRebuttalDraft() {
+            // Copy the current rebuttal draft to the clipboard for editing elsewhere.
+            if (!this.rebuttalDraft) return;
+            try {
+                await navigator.clipboard.writeText(this.rebuttalDraft);
+                this.rebuttalCopyStatus = 'Copied';
+                setTimeout(() => { this.rebuttalCopyStatus = ''; }, 1600);
+            } catch (error) {
+                this.showError('Copy failed. Please select the draft text manually.');
+            }
+        },
+
+        reviewPayload() {
+            // Build shared request body for reviewer analysis and rebuttal APIs.
+            const paperId = this.reviewPaperId ? Number(this.reviewPaperId) : null;
+            return {
+                comments: this.reviewComments,
+                paper_id: paperId || null
+            };
         },
 
         async loadDocuments() {

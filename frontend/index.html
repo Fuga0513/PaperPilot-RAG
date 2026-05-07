@@ -95,7 +95,7 @@
                 <section class="sidebar-section">
                     <h3>Tools</h3>
                     <button class="tool-entry" @click="setActivePanel('library')">Paper Comparison</button>
-                    <button class="tool-entry" disabled>Reviewer Analysis</button>
+                    <button class="tool-entry" @click="setActivePanel('reviewer')">Reviewer Analysis</button>
                     <button class="tool-entry" disabled>Research Writing</button>
                     <button class="tool-entry" disabled>Evaluation Report</button>
                 </section>
@@ -304,6 +304,80 @@
                                     <span>{{ session.session_id }}</span>
                                     <small>{{ session.message_count }} messages · {{ formatDate(session.updated_at) }}</small>
                                 </button>
+                            </div>
+                        </section>
+
+                        <section v-if="activeNav === 'reviewer'" class="panel reviewer-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <h2>Reviewer Analysis</h2>
+                                    <p>Analyze reviewer comments and draft a cautious, citation-backed rebuttal from your private papers.</p>
+                                </div>
+                            </div>
+
+                            <div class="reviewer-layout">
+                                <section class="reviewer-input-box">
+                                    <label>
+                                        <span>Target Paper</span>
+                                        <select v-model="reviewPaperId" :disabled="isAnalyzingReview || isDraftingRebuttal">
+                                            <option value="">All indexed papers</option>
+                                            <option v-for="paper in papers" :key="paper.id" :value="paper.id">
+                                                {{ formatPaperTitle(paper) }}
+                                            </option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        <span>Reviewer Comments</span>
+                                        <textarea
+                                            v-model="reviewComments"
+                                            rows="9"
+                                            :disabled="isAnalyzingReview || isDraftingRebuttal"
+                                            placeholder="Paste reviewer comments or decision letter text here."
+                                        ></textarea>
+                                    </label>
+                                    <div class="reviewer-actions">
+                                        <button class="secondary-action" :disabled="isAnalyzingReview || isDraftingRebuttal || !reviewComments.trim()" @click="analyzeReviewerComments">
+                                            <i :class="isAnalyzingReview ? 'fas fa-spinner fa-spin' : 'fas fa-magnifying-glass-chart'"></i>
+                                            {{ isAnalyzingReview ? 'Analyzing...' : 'Analyze Review' }}
+                                        </button>
+                                        <button class="primary-action" :disabled="isAnalyzingReview || isDraftingRebuttal || !reviewComments.trim()" @click="draftRebuttal">
+                                            <i :class="isDraftingRebuttal ? 'fas fa-spinner fa-spin' : 'fas fa-pen-nib'"></i>
+                                            {{ isDraftingRebuttal ? 'Drafting...' : 'Draft Rebuttal' }}
+                                        </button>
+                                    </div>
+                                </section>
+
+                                <section class="reviewer-output-box">
+                                    <h3>Review Points</h3>
+                                    <div v-if="reviewPoints.length === 0" class="empty-state compact">Analysis cards will appear here.</div>
+                                    <div v-else class="review-point-list">
+                                        <article v-for="(point, index) in reviewPoints" :key="index" class="review-point-card">
+                                            <div class="review-point-header">
+                                                <strong>Point {{ index + 1 }}</strong>
+                                                <span>{{ point.issue_type }}</span>
+                                                <small>{{ point.severity }}</small>
+                                            </div>
+                                            <p>{{ point.reviewer_original_comment }}</p>
+                                            <dl>
+                                                <dt>Strategy</dt>
+                                                <dd>{{ point.response_strategy }}</dd>
+                                                <dt>Required Action</dt>
+                                                <dd>{{ point.required_action }}</dd>
+                                                <dt>Evidence Needed</dt>
+                                                <dd>{{ point.evidence_needed }}</dd>
+                                            </dl>
+                                        </article>
+                                    </div>
+
+                                    <div class="rebuttal-heading">
+                                        <h3>Rebuttal Draft</h3>
+                                        <button class="secondary-action" :disabled="!rebuttalDraft" @click="copyRebuttalDraft">
+                                            <i class="fas fa-copy"></i> {{ rebuttalCopyStatus || 'Copy' }}
+                                        </button>
+                                    </div>
+                                    <div v-if="!rebuttalDraft" class="empty-state compact">Draft output will appear after retrieval.</div>
+                                    <div v-else class="rebuttal-draft" v-html="parseMarkdown(rebuttalDraft)"></div>
+                                </section>
                             </div>
                         </section>
 

@@ -67,7 +67,7 @@ class DraftRebuttalInput(BaseModel):
     """Input schema for rebuttal drafting."""
 
     comments: str = Field(..., description="Reviewer comments to respond to.")
-    evidence_query: str = Field("", description="Optional retrieval query for evidence from uploaded papers or project docs.")
+    paper_id: str | int | None = Field(None, description="Optional current-user Paper.id for the rebuttal target.")
 
 
 class RelatedWorkInput(BaseModel):
@@ -348,24 +348,84 @@ def _compare_papers(
         db.close()
 
 
-def _analyze_reviewer_comments(comments: str, paper_id: str = "") -> str:
-    """Skeleton for reviewer-comment analysis."""
-    return (
-        "analyze_reviewer_comments is not fully implemented in stage 5. Expected output "
-        "will group reviewer concerns, severity, required evidence, and response plan. "
-        "Any factual claim about the paper must cite retrieved chunks.\n"
-        f"Received paper_id={paper_id!r}, comments_preview={comments[:500]!r}."
-    )
+def _get_current_tool_user():
+    """Load the SQLAlchemy User row for a private-paper tool call."""
+    user_context = get_tool_user_context() or {}
+    owner_id = user_context.get("owner_id")
+    if owner_id is None:
+        return None, None
+
+    from database import SessionLocal
+    from models import User
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == owner_id).first()
+    if not user:
+        db.close()
+        return None, None
+    return db, user
 
 
-def _draft_rebuttal(comments: str, evidence_query: str = "") -> str:
-    """Skeleton for rebuttal drafting."""
-    return (
-        "draft_rebuttal is not fully implemented in stage 5. Expected output will draft "
-        "polite, evidence-backed rebuttal paragraphs. It must not invent experiments, "
-        "numbers, or citations; evidence must come from retrieved chunks.\n"
-        f"Received evidence_query={evidence_query!r}, comments_preview={comments[:500]!r}."
-    )
+def _analyze_reviewer_comments(comments: str, paper_id: str | int | None = None) -> str:
+    """Analyze reviewer comments into issue cards."""
+    db, user = _get_current_tool_user()
+    if not db or not user:
+        return "No authenticated user context is available for reviewer analysis."
+
+    from paper_rebuttal import analyze_review_comments
+
+    try:
+        result = analyze_review_comments(db, user, comments=comments, paper_id=paper_id)
+        rows = ["| Reviewer Comment | Issue Type | Severity | Strategy | Required Action | Evidence Needed |", "| --- | --- | --- | --- | --- | --- |"]
+        for point in result.points:
+            rows.append(
+                "| "
+                + " | ".join(str(point.get(key, "")).replace("|", "\\|") for key in [
+                    "reviewer_original_comment",
+                    "issue_type",
+                    "severity",
+                    "response_strategy",
+                    "required_action",
+                    "evidence_needed",
+                ])
+                + " |"
+            )
+        return "\n".join(rows)
+    except PermissionError:
+        return "Selected paper is not accessible to the current user."
+    except ValueError as exc:
+        return str(exc)
+    except Exception as exc:
+        return f"analyze_reviewer_comments failed: {exc}"
+    finally:
+        db.close()
+
+
+def _draft_rebuttal(comments: str, paper_id: str | int | None = None) -> str:
+    """Draft a rebuttal using current-user paper evidence."""
+    limit_message = _acquire_research_search_slot("draft_rebuttal")
+    if limit_message:
+        return limit_message
+
+    db, user = _get_current_tool_user()
+    if not db or not user:
+        return "No authenticated user context is available for rebuttal drafting."
+
+    from paper_rebuttal import draft_rebuttal
+
+    try:
+        result = draft_rebuttal(db, user, comments=comments, paper_id=paper_id)
+        result.rag_trace["user_context_reserved"] = True
+        _set_last_rag_context({"rag_trace": result.rag_trace})
+        return result.response
+    except PermissionError:
+        return "Selected paper is not accessible to the current user."
+    except ValueError as exc:
+        return str(exc)
+    except Exception as exc:
+        return f"draft_rebuttal failed: {exc}"
+    finally:
+        db.close()
 
 
 def _generate_related_work(topic: str, constraints: str = "") -> str:
@@ -423,9 +483,9 @@ analyze_reviewer_comments = StructuredTool.from_function(
     args_schema=ReviewerCommentsInput,
     description=(
         "Use for analyzing reviewer comments or decision letters. Input: {'comments': "
-        "string, 'paper_id': optional string}. Stage 5 output is a skeleton that "
-        "classifies concerns and plans evidence needs. Do not invent paper details; "
-        "citations must come from retrieved chunks."
+        "string, 'paper_id': optional current-user Paper.id}. Output classifies each "
+        "reviewer point by issue type, severity, response strategy, required action, "
+        "and evidence needed. Do not invent paper details."
     ),
 )
 
@@ -435,9 +495,10 @@ draft_rebuttal = StructuredTool.from_function(
     args_schema=DraftRebuttalInput,
     description=(
         "Use for drafting rebuttal responses to reviewers. Input: {'comments': string, "
-        "'evidence_query': optional string}. Stage 5 output is a skeleton. Future "
-        "drafts must be grounded in retrieved evidence, with no fabricated experiments, "
-        "numbers, or citations."
+        "'paper_id': optional current-user Paper.id}. The draft must be grounded in "
+        "current-user retrieved chunks, separate existing evidence from suggested "
+        "experiments and manuscript revisions, and explicitly mark insufficient evidence. "
+        "Never fabricate experiments, numbers, results, or citation ids."
     ),
 )
 

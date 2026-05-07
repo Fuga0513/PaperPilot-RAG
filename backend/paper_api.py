@@ -20,6 +20,7 @@ from paper_indexer import MilvusSchemaError, index_paper_chunks, remove_paper_ve
 from paper_metadata_extractor import extract_and_store_metadata
 from paper_parser import ResearchPaperParser
 from paper_comparison import compare_user_papers
+from paper_rebuttal import analyze_review_comments, draft_rebuttal
 from schemas import (
     ComparePapersRequest,
     ComparePapersResponse,
@@ -28,6 +29,10 @@ from schemas import (
     PaperDetailOut,
     PaperMetadataOut,
     PaperOut,
+    RebuttalDraftRequest,
+    RebuttalDraftResponse,
+    ReviewAnalysisRequest,
+    ReviewAnalysisResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -362,6 +367,63 @@ async def compare_papers_endpoint(
     except Exception as exc:
         logger.exception("Failed to compare papers for user_id=%s", current_user.id)
         raise HTTPException(status_code=500, detail="Failed to compare papers") from exc
+
+
+@router.post("/reviewer/analyze", response_model=ReviewAnalysisResponse)
+async def analyze_reviewer_comments_endpoint(
+    request: ReviewAnalysisRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Analyze pasted reviewer comments for the current user."""
+    try:
+        result = analyze_review_comments(
+            db,
+            current_user,
+            comments=request.comments,
+            paper_id=request.paper_id,
+        )
+        return ReviewAnalysisResponse(points=result.points, paper_id=result.paper_id)
+    except PermissionError as exc:
+        logger.warning("Reviewer analysis denied for user_id=%s: %s", current_user.id, exc)
+        raise HTTPException(status_code=404, detail="Selected paper was not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to analyze reviewer comments for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to analyze reviewer comments") from exc
+
+
+@router.post("/reviewer/rebuttal", response_model=RebuttalDraftResponse)
+async def draft_rebuttal_endpoint(
+    request: RebuttalDraftRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Draft a citation-backed rebuttal using current-user paper evidence only."""
+    try:
+        result = draft_rebuttal(
+            db,
+            current_user,
+            comments=request.comments,
+            paper_id=request.paper_id,
+        )
+        return RebuttalDraftResponse(
+            response=result.response,
+            points=result.points,
+            paper_id=result.paper_id,
+            citations=result.citations,
+            rag_trace=result.rag_trace,
+            tool_calls=result.tool_calls,
+        )
+    except PermissionError as exc:
+        logger.warning("Rebuttal drafting denied for user_id=%s: %s", current_user.id, exc)
+        raise HTTPException(status_code=404, detail="Selected paper was not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to draft rebuttal for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to draft rebuttal") from exc
 
 
 @router.post("/upload", response_model=PaperDetailOut)

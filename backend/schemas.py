@@ -298,3 +298,36 @@ class ComparePapersResponse(BaseModel):
     citations: List[CitationOut] = []
     rag_trace: Optional[RagTrace] = None
     tool_calls: Optional[List[ToolCallOut]] = None
+
+
+class ReviewPointOut(BaseModel):
+    reviewer_original_comment: str
+    issue_type: str
+    severity: str
+    response_strategy: str
+    required_action: str
+    evidence_needed: str
+
+
+class ReviewAnalysisRequest(BaseModel):
+    comments: str
+    paper_id: Optional[int] = None
+
+
+class ReviewAnalysisResponse(BaseModel):
+    points: List[ReviewPointOut]
+    paper_id: Optional[int] = None
+
+
+class RebuttalDraftRequest(BaseModel):
+    comments: str
+    paper_id: Optional[int] = None
+
+
+class RebuttalDraftResponse(BaseModel):
+    response: str
+    points: List[ReviewPointOut]
+    paper_id: Optional[int] = None
+    citations: List[CitationOut] = []
+    rag_trace: Optional[RagTrace] = None
+    tool_calls: Optional[List[ToolCallOut]] = None
