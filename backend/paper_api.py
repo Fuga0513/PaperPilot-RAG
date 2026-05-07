@@ -19,7 +19,10 @@ from models import Paper, PaperChunk, PaperMetadata, User
 from paper_indexer import MilvusSchemaError, index_paper_chunks, remove_paper_vectors
 from paper_metadata_extractor import extract_and_store_metadata
 from paper_parser import ResearchPaperParser
+from paper_comparison import compare_user_papers
 from schemas import (
+    ComparePapersRequest,
+    ComparePapersResponse,
     PaperChunkOut,
     PaperDeleteResponse,
     PaperDetailOut,
@@ -323,6 +326,42 @@ async def list_papers(
     except Exception as exc:
         logger.exception("Failed to list papers for user_id=%s", current_user.id)
         raise HTTPException(status_code=500, detail="Failed to list papers") from exc
+
+
+@router.post("/compare", response_model=ComparePapersResponse)
+async def compare_papers_endpoint(
+    request: ComparePapersRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Compare 2-5 current-user-owned papers with citation-backed evidence."""
+    try:
+        result = compare_user_papers(
+            db,
+            current_user,
+            query=request.query,
+            paper_ids=request.paper_ids,
+            filenames=request.filenames,
+            compare_aspects=request.compare_aspects,
+        )
+        return ComparePapersResponse(
+            response=result.response,
+            paper_ids=result.paper_ids,
+            compare_aspects=result.compare_aspects,
+            citations=result.citations,
+            rag_trace=result.rag_trace,
+            tool_calls=result.tool_calls,
+        )
+    except PermissionError as exc:
+        logger.warning("Paper comparison denied for user_id=%s: %s", current_user.id, exc)
+        raise HTTPException(status_code=404, detail="One or more selected papers were not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to compare papers for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to compare papers") from exc
 
 
 @router.post("/upload", response_model=PaperDetailOut)

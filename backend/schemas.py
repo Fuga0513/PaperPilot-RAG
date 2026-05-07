@@ -282,3 +282,19 @@ class PaperDetailOut(PaperOut):
 class PaperDeleteResponse(BaseModel):
     paper_id: int
     message: str
+
+
+class ComparePapersRequest(BaseModel):
+    query: str = "Compare the selected papers"
+    paper_ids: Optional[List[int]] = None
+    filenames: Optional[List[str]] = None
+    compare_aspects: Optional[List[str]] = None
+
+
+class ComparePapersResponse(BaseModel):
+    response: str
+    paper_ids: List[int]
+    compare_aspects: List[str]
+    citations: List[CitationOut] = []
+    rag_trace: Optional[RagTrace] = None
+    tool_calls: Optional[List[ToolCallOut]] = None

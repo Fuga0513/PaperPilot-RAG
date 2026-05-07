@@ -47,8 +47,13 @@ class PaperIdInput(BaseModel):
 class ComparePapersInput(BaseModel):
     """Input schema for multi-paper comparison."""
 
-    paper_ids: list[str] = Field(..., description="Paper ids or filenames to compare.")
-    comparison_focus: str = Field("", description="Aspect to compare, such as method, dataset, results, or limitations.")
+    query: str = Field("Compare the selected papers", description="User comparison question or focus.")
+    paper_ids: list[str | int] = Field(default_factory=list, description="Optional current-user Paper.id values to compare.")
+    filenames: list[str] = Field(default_factory=list, description="Optional current-user filenames or titles to compare.")
+    compare_aspects: list[str] = Field(
+        default_factory=lambda: ["problem", "method", "contribution", "dataset", "metric", "limitation"],
+        description="Optional comparison aspects/columns.",
+    )
 
 
 class ReviewerCommentsInput(BaseModel):
@@ -296,15 +301,51 @@ def _summarize_paper(paper_id: str, question: str = "") -> str:
     )
 
 
-def _compare_papers(paper_ids: list[str], comparison_focus: str = "") -> str:
-    """Skeleton for multi-paper comparison."""
-    return (
-        "compare_papers is not fully implemented in stage 5. Expected output will be "
-        "a citation-backed comparison table covering methods, datasets, results, "
-        "limitations, and open questions. It must only cite chunks retrieved from the "
-        "current user's papers.\n"
-        f"Received paper_ids={paper_ids}, comparison_focus={comparison_focus!r}."
-    )
+def _compare_papers(
+    query: str = "Compare the selected papers",
+    paper_ids: list[str | int] | None = None,
+    filenames: list[str] | None = None,
+    compare_aspects: list[str] | None = None,
+) -> str:
+    """Compare current-user papers with retrieval-backed citations."""
+    limit_message = _acquire_research_search_slot("compare_papers")
+    if limit_message:
+        return limit_message
+
+    user_context = get_tool_user_context() or {}
+    owner_id = user_context.get("owner_id")
+    username = user_context.get("user_id")
+    if owner_id is None or not username:
+        return "No authenticated user context is available for private paper comparison."
+
+    from database import SessionLocal
+    from models import User
+    from paper_comparison import compare_user_papers
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == owner_id).first()
+        if not user:
+            return "No authenticated user context is available for private paper comparison."
+        result = compare_user_papers(
+            db,
+            user,
+            query=query,
+            paper_ids=paper_ids or [],
+            filenames=filenames or [],
+            compare_aspects=compare_aspects or None,
+        )
+        result.rag_trace["user_context_reserved"] = True
+        _set_last_rag_context({"rag_trace": result.rag_trace})
+        return result.response
+    except PermissionError:
+        return "One or more selected papers are not accessible to the current user."
+    except ValueError as exc:
+        return str(exc)
+    except Exception as exc:
+        return f"compare_papers failed: {exc}"
+    finally:
+        db.close()
 
 
 def _analyze_reviewer_comments(comments: str, paper_id: str = "") -> str:
@@ -368,10 +409,11 @@ compare_papers = StructuredTool.from_function(
     name="compare_papers",
     args_schema=ComparePapersInput,
     description=(
-        "Use for comparing multiple papers. Input: {'paper_ids': list[string], "
-        "'comparison_focus': optional string}. Stage 5 output is a not-implemented "
-        "skeleton. Future output must be a citation-backed comparison; never invent "
-        "evidence and cite only retrieved chunks."
+        "Use first for paper comparison intents, including 比较, 对比, 区别, 相同点, 不同点, "
+        "related work table, survey, or 'summarize these papers'. Input: {'query': string, "
+        "'paper_ids': optional list[string], 'filenames': optional list[string], "
+        "'compare_aspects': optional list[string]}. Output is a Markdown comparison table "
+        "grounded in retrieved current-user paper chunks. Never invent evidence and cite only retrieved chunks."
     ),
 )
 

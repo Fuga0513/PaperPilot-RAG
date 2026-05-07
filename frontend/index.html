@@ -94,7 +94,7 @@
 
                 <section class="sidebar-section">
                     <h3>Tools</h3>
-                    <button class="tool-entry" disabled>Paper Comparison</button>
+                    <button class="tool-entry" @click="setActivePanel('library')">Paper Comparison</button>
                     <button class="tool-entry" disabled>Reviewer Analysis</button>
                     <button class="tool-entry" disabled>Research Writing</button>
                     <button class="tool-entry" disabled>Evaluation Report</button>
@@ -137,22 +137,55 @@
                             </div>
                             <div class="library-layout">
                                 <div class="library-list">
+                                    <section class="comparison-box">
+                                        <div class="comparison-heading">
+                                            <div>
+                                                <strong>Paper Comparison</strong>
+                                                <small>{{ selectedPaperCount }}/5 selected</small>
+                                            </div>
+                                            <button
+                                                class="primary-action"
+                                                :disabled="isComparingPapers || selectedPaperCount < 2"
+                                                @click="compareSelectedPapers"
+                                            >
+                                                <i :class="isComparingPapers ? 'fas fa-spinner fa-spin' : 'fas fa-table-columns'"></i>
+                                                {{ isComparingPapers ? 'Comparing...' : 'Compare Selected Papers' }}
+                                            </button>
+                                        </div>
+                                        <textarea
+                                            v-model="comparisonQuery"
+                                            rows="2"
+                                            :disabled="isComparingPapers"
+                                            placeholder="Comparison focus"
+                                        ></textarea>
+                                        <p v-if="selectedPaperCount < 2" class="comparison-help">Select at least two papers from your private library.</p>
+                                        <div v-if="comparisonResult" class="comparison-result" v-html="parseMarkdown(comparisonResult)"></div>
+                                    </section>
                                     <div v-if="loading.papers" class="empty-state">Loading papers...</div>
                                     <div v-else-if="papers.length === 0" class="empty-state">No papers uploaded yet.</div>
                                     <div v-else class="paper-list">
-                                        <button
+                                        <article
                                             v-for="paper in papers"
                                             :key="paper.id"
-                                            :class="['paper-item', {active: selectedPaper?.id === paper.id}]"
-                                            @click="selectPaper(paper)"
+                                            :class="['paper-item', {active: selectedPaper?.id === paper.id, selected: selectedPaperIds.includes(paper.id)}]"
                                         >
+                                            <label class="paper-select-row">
+                                                <input
+                                                    type="checkbox"
+                                                    :checked="selectedPaperIds.includes(paper.id)"
+                                                    :disabled="isComparingPapers"
+                                                    @change="togglePaperSelection(paper.id)"
+                                                >
+                                                <span>Select</span>
+                                            </label>
                                             <i :class="getPaperIcon(paper.filename)"></i>
                                             <span>{{ formatPaperTitle(paper) }}</span>
                                             <small>{{ paper.authors || 'Authors pending' }}</small>
                                             <small>{{ paper.year || '-' }} · {{ paper.venue || 'Venue pending' }}</small>
                                             <small :class="['paper-status', paperStatusClass(paper.status)]">{{ paper.status }}</small>
                                             <small>Uploaded {{ formatDate(paper.created_at) }}</small>
-                                        </button>
+                                            <button class="text-action paper-open-action" @click="selectPaper(paper)">Details</button>
+                                        </article>
                                     </div>
                                 </div>
                                 <aside class="paper-detail">

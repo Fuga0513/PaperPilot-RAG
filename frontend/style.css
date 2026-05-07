@@ -389,6 +389,65 @@ textarea:disabled {
     overflow-y: auto;
 }
 
+.comparison-box {
+    margin: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: white;
+}
+
+.comparison-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.comparison-heading div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.comparison-heading small,
+.comparison-help {
+    color: var(--muted);
+}
+
+.comparison-box textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 62px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px;
+    font: inherit;
+}
+
+.comparison-result {
+    margin-top: 12px;
+    overflow-x: auto;
+}
+
+.comparison-result table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.comparison-result th,
+.comparison-result td {
+    border: 1px solid var(--line);
+    padding: 8px;
+    vertical-align: top;
+}
+
+.comparison-result th {
+    background: var(--surface-soft);
+}
+
 .paper-detail {
     min-width: 0;
     padding: 16px;
@@ -448,7 +507,7 @@ textarea:disabled {
 .session-item {
     width: 100%;
     display: grid;
-    grid-template-columns: 24px 1fr;
+    grid-template-columns: 24px 1fr auto;
     gap: 4px 10px;
     padding: 12px;
     border: 1px solid var(--line);
@@ -458,9 +517,32 @@ textarea:disabled {
     text-align: left;
 }
 
+.paper-select-row {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.paper-select-row input {
+    width: 16px;
+    height: 16px;
+}
+
 .paper-item i {
     grid-row: span 4;
     margin-top: 2px;
+}
+
+.paper-open-action {
+    grid-column: 3;
+    grid-row: 2 / span 2;
+    align-self: start;
+    min-height: 32px;
+    padding: 4px 8px;
 }
 
 .paper-item small,
@@ -500,6 +582,10 @@ textarea:disabled {
 .session-item.active {
     border-color: var(--primary);
     background: #eff6ff;
+}
+
+.paper-item.selected {
+    box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .session-item {

@@ -21,6 +21,11 @@ createApp({
             papers: [],
             selectedPaper: null,
             selectedPaperDetail: null,
+            selectedPaperIds: [],
+            comparisonQuery: 'Compare the selected papers by problem, method, contribution, dataset, metric, and limitation.',
+            comparisonResult: '',
+            comparisonAspects: ['problem', 'method', 'contribution', 'dataset', 'metric', 'limitation'],
+            isComparingPapers: false,
             isParsingPaper: false,
             isIndexingPaper: false,
             documents: [],
@@ -50,7 +55,7 @@ createApp({
             deletePollTimers: {},
             deleteRemoveTimers: {},
 
-            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false },
+            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false },
             documentsLoading: false,
             errorMessage: ''
         };
@@ -69,6 +74,10 @@ createApp({
 
         hasIndexedPapers() {
             return this.papers.some(paper => paper.status === 'indexed');
+        },
+
+        selectedPaperCount() {
+            return this.selectedPaperIds.length;
         }
     },
 
@@ -285,6 +294,8 @@ createApp({
             this.documents = [];
             this.selectedPaper = null;
             this.selectedPaperDetail = null;
+            this.selectedPaperIds = [];
+            this.comparisonResult = '';
             this.citations = [];
             this.ragTrace = null;
             this.toolCalls = [];
@@ -386,6 +397,7 @@ createApp({
             try {
                 const papers = await this.apiGet('/papers');
                 this.papers = Array.isArray(papers) ? papers : [];
+                this.selectedPaperIds = this.selectedPaperIds.filter(id => this.papers.some(paper => paper.id === id));
                 this.syncSelectedPaperAfterRefresh();
             } catch (error) {
                 this.showError('Failed to load papers: ' + error.message);
@@ -476,6 +488,62 @@ createApp({
             }
             this.selectedPaper = null;
             this.selectedPaperDetail = null;
+        },
+
+        togglePaperSelection(paperId) {
+            // Toggle one Paper Library row for POST /papers/compare.
+            const id = Number(paperId);
+            if (!id) return;
+            const exists = this.selectedPaperIds.includes(id);
+            if (exists) {
+                this.selectedPaperIds = this.selectedPaperIds.filter(item => item !== id);
+                return;
+            }
+            if (this.selectedPaperIds.length >= 5) {
+                this.showError('Please select no more than five papers for comparison.');
+                return;
+            }
+            this.selectedPaperIds = [...this.selectedPaperIds, id];
+        },
+
+        getSelectedPapers() {
+            // Return selected current-user papers from the loaded library state.
+            const selected = new Set(this.selectedPaperIds);
+            return this.papers.filter(paper => selected.has(paper.id));
+        },
+
+        async compareSelectedPapers() {
+            // POST /papers/compare and update comparison, citations, and RAG Trace panels.
+            if (!this.requireAuth() || this.isComparingPapers) return;
+            const selected = this.getSelectedPapers();
+            if (selected.length < 2) {
+                this.showError('Please select at least two papers to compare.');
+                return;
+            }
+            this.isComparingPapers = true;
+            this.loading.comparison = true;
+            this.clearError();
+            try {
+                const result = await this.apiPost('/papers/compare', {
+                    query: this.comparisonQuery || 'Compare the selected papers',
+                    paper_ids: selected.map(paper => paper.id),
+                    compare_aspects: this.comparisonAspects
+                });
+                this.renderComparisonResult(result);
+            } catch (error) {
+                this.showError('Failed to compare papers: ' + error.message);
+            } finally {
+                this.isComparingPapers = false;
+                this.loading.comparison = false;
+            }
+        },
+
+        renderComparisonResult(result) {
+            // Render backend Markdown and keep citations/trace consistent with chat answers.
+            this.comparisonResult = result?.response || '';
+            this.applyCitations(result?.citations || []);
+            this.applyRagTrace(result?.rag_trace || null);
+            this.toolCalls = result?.tool_calls || this.toolCalls;
         },
 
         async loadDocuments() {
@@ -866,6 +934,11 @@ createApp({
             const idx = this.streamingMessageIndex;
             if (idx !== null && this.messages[idx]) this.messages[idx].ragTrace = trace;
             this.ragTrace = trace;
+            if (!trace) {
+                this.citations = [];
+                this.toolCalls = [];
+                return;
+            }
             this.applyCitations(this.extractCitations(trace));
             const traceToolCalls = Array.isArray(trace?.tool_calls) ? trace.tool_calls : [];
             this.toolCalls = traceToolCalls.length ? traceToolCalls : [{

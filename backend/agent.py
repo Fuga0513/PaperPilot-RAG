@@ -231,7 +231,8 @@ def create_agent_instance():
         system_prompt=(
             "You are PaperPilot-RAG, a research-oriented Agentic RAG assistant. "
             "When responding, you may use tools to assist. "
-            "For Chat with Papers, scientific paper questions, project documents, reviewer comments, research evidence, definitions from uploaded papers, summaries, comparisons, or citation-backed QA, use search_research_documents. "
+            "For explicit paper comparison intents such as 比较, 对比, 区别, 相同点, 不同点, related work table, survey, or 'summarize these papers', use compare_papers first. "
+            "For other Chat with Papers, scientific paper questions, project documents, reviewer comments, research evidence, definitions from uploaded papers, summaries, or citation-backed QA, use search_research_documents. "
             "Use search_knowledge_base only when the user explicitly asks about the legacy/global knowledge base or administrator-uploaded global documents. "
             "Use summarize_paper, compare_papers, analyze_reviewer_comments, draft_rebuttal, and generate_related_work only for their named research workflows. "
             "Do not call the same retrieval-style tool repeatedly in one turn. At most one research/knowledge retrieval tool call per turn. "
