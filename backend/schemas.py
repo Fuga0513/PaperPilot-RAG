@@ -76,7 +76,9 @@ class ToolCallOut(BaseModel):
 class RagTrace(BaseModel):
     tool_used: bool
     tool_name: str
+    original_query: Optional[str] = None
     query: Optional[str] = None
+    rewritten_query: Optional[str] = None
     expanded_query: Optional[str] = None
     step_back_question: Optional[str] = None
     step_back_answer: Optional[str] = None
@@ -96,6 +98,8 @@ class RagTrace(BaseModel):
     retrieval_mode: Optional[str] = None
     retrieval_scope: Optional[str] = None
     owner_filter_applied: Optional[bool] = None
+    user_filter_applied: Optional[bool] = None
+    fallback_reason: Optional[str] = None
     candidate_k: Optional[int] = None
     leaf_retrieve_level: Optional[int] = None
     auto_merge_enabled: Optional[bool] = None
@@ -105,6 +109,9 @@ class RagTrace(BaseModel):
     auto_merge_steps: Optional[int] = None
     citations: Optional[List[CitationOut]] = None
     tool_calls: Optional[List[ToolCallOut]] = None
+    first_retrieval_results: Optional[List[RetrievedChunk]] = None
+    second_retrieval_results: Optional[List[RetrievedChunk]] = None
+    selected_context_chunks: Optional[List[RetrievedChunk]] = None
     retrieved_chunks: Optional[List[RetrievedChunk]] = None
     initial_retrieved_chunks: Optional[List[RetrievedChunk]] = None
     expanded_retrieved_chunks: Optional[List[RetrievedChunk]] = None

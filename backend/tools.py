@@ -193,10 +193,13 @@ def _run_rag_search(query: str, tool_name: str, source_type: str = "document") -
         rag_trace["citations"] = citations
         rag_trace["tool_calls"] = [{"name": tool_name, "detail": rag_trace.get("retrieval_stage") or "retrieval"}]
         rag_trace["retrieved_chunks"] = docs
+        rag_trace["selected_context_chunks"] = docs
         if rag_trace.get("retrieval_stage") == "expanded":
             rag_trace["expanded_retrieved_chunks"] = docs
+            rag_trace["second_retrieval_results"] = docs
         else:
             rag_trace["initial_retrieved_chunks"] = docs
+            rag_trace["first_retrieval_results"] = docs
         _set_last_rag_context({"rag_trace": rag_trace})
 
     if not citations:

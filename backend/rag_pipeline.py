@@ -60,6 +60,30 @@ GRADE_PROMPT = (
 )
 
 
+def _research_rewrite_router_prompt(question: str) -> str:
+    """Prompt the router to choose a research-aware query rewrite strategy."""
+    return (
+        "You are the query routing component for PaperPilot-RAG, a scientific-paper RAG system.\n"
+        "Choose exactly one strategy: step_back, hyde, or complex.\n\n"
+        "Use step_back for abstract/conceptual questions that need a broader principle before retrieval, "
+        "such as method intuition, problem formulation, or why a research direction matters.\n"
+        "Use hyde for hypothetical, exploratory, topic-expansion, or related-work questions, "
+        "such as summarizing sparse sensing literature or finding papers about a theme.\n"
+        "Use complex for multi-part questions, paper comparisons, reviewer-comment evidence hunting, "
+        "or questions involving methods + datasets + metrics + ablations together.\n"
+        "For simple factual questions, choose step_back but keep rewriting minimal.\n\n"
+        "Scientific QA examples:\n"
+        "- Method questions: modules, baseline differences, architecture, loss, training pipeline.\n"
+        "- Experiment questions: datasets, metrics, ablations, results, limitations.\n"
+        "- Comparison questions: compare methods across papers, identify papers using Mamba/Cross-Mamba.\n"
+        "- Reviewer comments: find evidence for a challenged claim, directionality, assumptions, robustness.\n"
+        "- Related work: synthesize a topic across available papers.\n\n"
+        "Important: preserve exact keywords, method names, datasets, metrics, paper titles, and reviewer terms "
+        "in later rewritten queries. Do not translate or drop specific terms.\n\n"
+        f"User question: {question}"
+    )
+
+
 class GradeDocuments(BaseModel):
     """Grade documents using a binary score for relevance check."""
 
@@ -137,8 +161,12 @@ def retrieve_initial(state: RAGState) -> RAGState:
     rag_trace = {
         "tool_used": True,
         "tool_name": "search_knowledge_base",
+        "original_query": query,
         "query": query,
+        "rewritten_query": query,
         "expanded_query": query,
+        "first_retrieval_results": results,
+        "selected_context_chunks": results,
         "retrieved_chunks": results,
         "initial_retrieved_chunks": results,
         "retrieval_stage": "initial",
@@ -150,6 +178,7 @@ def retrieve_initial(state: RAGState) -> RAGState:
         "retrieval_mode": retrieve_meta.get("retrieval_mode"),
         "retrieval_scope": retrieve_meta.get("retrieval_scope"),
         "owner_filter_applied": retrieve_meta.get("owner_filter_applied"),
+        "user_filter_applied": retrieve_meta.get("owner_filter_applied"),
         "candidate_k": retrieve_meta.get("candidate_k"),
         "leaf_retrieve_level": retrieve_meta.get("leaf_retrieve_level"),
         "auto_merge_enabled": retrieve_meta.get("auto_merge_enabled"),
@@ -157,6 +186,7 @@ def retrieve_initial(state: RAGState) -> RAGState:
         "auto_merge_threshold": retrieve_meta.get("auto_merge_threshold"),
         "auto_merge_replaced_chunks": retrieve_meta.get("auto_merge_replaced_chunks"),
         "auto_merge_steps": retrieve_meta.get("auto_merge_steps"),
+        "fallback_reason": None if results else "no_initial_retrieval_results",
     }
     return {
         "query": query,
@@ -213,6 +243,7 @@ def rewrite_question_node(state: RAGState) -> RAGState:
             "- complex：多步骤、需要分解或综合多种信息的复杂问题。\n"
             f"用户问题：{question}"
         )
+        prompt = _research_rewrite_router_prompt(question)
         try:
             decision = router.with_structured_output(RewriteStrategy).invoke(
                 [{"role": "user", "content": prompt}]
@@ -240,6 +271,7 @@ def rewrite_question_node(state: RAGState) -> RAGState:
     rag_trace = state.get("rag_trace", {}) or {}
     rag_trace.update({
         "rewrite_strategy": strategy,
+        "rewritten_query": expanded_query,
         "rewrite_query": expanded_query,
     })
 
@@ -359,12 +391,16 @@ def retrieve_expanded(state: RAGState) -> RAGState:
     emit_rag_step("✅", f"扩展检索完成，共 {len(deduped)} 个片段")
     rag_trace = state.get("rag_trace", {}) or {}
     rag_trace.update({
+        "original_query": state["question"],
         "expanded_query": state.get("expanded_query") or state["question"],
+        "rewritten_query": state.get("expanded_query") or state["question"],
         "step_back_question": state.get("step_back_question", ""),
         "step_back_answer": state.get("step_back_answer", ""),
         "hypothetical_doc": state.get("hypothetical_doc", ""),
         "expansion_type": strategy,
         "retrieved_chunks": deduped,
+        "second_retrieval_results": deduped,
+        "selected_context_chunks": deduped,
         "expanded_retrieved_chunks": deduped,
         "retrieval_stage": "expanded",
         "rerank_enabled": rerank_enabled_any,
@@ -375,6 +411,7 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         "retrieval_mode": retrieval_mode,
         "retrieval_scope": state.get("source_type") or "document",
         "owner_filter_applied": bool(state.get("source_type") == "paper" and state.get("owner_id") is not None),
+        "user_filter_applied": bool(state.get("source_type") == "paper" and state.get("owner_id") is not None),
         "candidate_k": candidate_k,
         "leaf_retrieve_level": leaf_retrieve_level,
         "auto_merge_enabled": auto_merge_enabled,
@@ -382,6 +419,7 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         "auto_merge_threshold": auto_merge_threshold,
         "auto_merge_replaced_chunks": auto_merge_replaced_chunks,
         "auto_merge_steps": auto_merge_steps,
+        "fallback_reason": None if deduped else "no_second_retrieval_results",
     })
     return {"docs": deduped, "context": context, "rag_trace": rag_trace}
 

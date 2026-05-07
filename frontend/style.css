@@ -706,10 +706,70 @@ textarea:disabled {
     flex-direction: column;
     gap: 8px;
     color: var(--muted);
+    overflow-wrap: anywhere;
 }
 
 .trace-list strong {
     color: var(--text);
+}
+
+.trace-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.trace-heading h2 {
+    margin-bottom: 0;
+}
+
+.icon-action {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: white;
+    color: var(--text);
+}
+
+.trace-results {
+    margin-top: 6px;
+    color: var(--muted);
+}
+
+.trace-results summary {
+    cursor: pointer;
+    font-weight: 800;
+    color: var(--text);
+}
+
+.trace-result-group {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.trace-chunk-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--line);
+}
+
+.trace-chunk-row span {
+    color: var(--text);
+    line-height: 1.35;
+}
+
+.trace-chunk-row small,
+.trace-empty {
+    color: var(--muted);
+    font-size: 0.82rem;
 }
 
 .warning-text {

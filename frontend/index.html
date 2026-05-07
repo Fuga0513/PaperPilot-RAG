@@ -365,14 +365,34 @@
                         </section>
 
                         <section class="panel mini-panel">
-                            <h2>RAG Trace</h2>
+                            <div class="trace-heading">
+                                <h2>RAG Trace</h2>
+                                <button class="icon-action" @click="traceExpanded = !traceExpanded">
+                                    <i :class="traceExpanded ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
+                                </button>
+                            </div>
                             <div v-if="!ragTrace" class="empty-state compact">Trace will appear after a RAG answer.</div>
-                            <div v-else class="trace-list">
+                            <div v-else-if="traceExpanded" class="trace-list">
+                                <div><strong>Original:</strong> {{ ragTrace.original_query || ragTrace.query || '-' }}</div>
+                                <div><strong>Rewritten:</strong> {{ ragTrace.rewritten_query || ragTrace.expanded_query || '-' }}</div>
+                                <div><strong>Strategy:</strong> {{ ragTrace.rewrite_strategy || ragTrace.expansion_type || '-' }}</div>
                                 <div><strong>Stage:</strong> {{ ragTrace.retrieval_stage || '-' }}</div>
                                 <div><strong>Mode:</strong> {{ ragTrace.retrieval_mode || '-' }}</div>
+                                <div><strong>User filter:</strong> {{ yesNo(ragTrace.user_filter_applied ?? ragTrace.owner_filter_applied) }}</div>
                                 <div><strong>Rerank:</strong> {{ yesNo(ragTrace.rerank_applied) }}</div>
                                 <div><strong>Auto-merge:</strong> {{ yesNo(ragTrace.auto_merge_applied) }}</div>
-                                <div v-if="ragTrace.rewrite_strategy"><strong>Rewrite:</strong> {{ ragTrace.rewrite_strategy }}</div>
+                                <div v-if="ragTrace.fallback_reason"><strong>Fallback:</strong> {{ ragTrace.fallback_reason }}</div>
+                                <details class="trace-results" :open="traceResultsExpanded" @toggle="traceResultsExpanded = $event.target.open">
+                                    <summary>Retrieval Results</summary>
+                                    <div v-for="key in ['first_retrieval_results', 'second_retrieval_results', 'selected_context_chunks']" :key="key" class="trace-result-group">
+                                        <strong>{{ key.replaceAll('_', ' ') }}</strong>
+                                        <div v-if="traceResults(key).length === 0" class="trace-empty">No data</div>
+                                        <div v-for="(chunk, idx) in traceResults(key)" :key="key + (chunk.chunk_id || idx)" class="trace-chunk-row">
+                                            <span>{{ traceChunkLabel(chunk, idx) }}</span>
+                                            <small>score {{ formatScore(chunk.score) }} / rerank {{ formatScore(chunk.rerank_score) }}</small>
+                                        </div>
+                                    </div>
+                                </details>
                             </div>
                         </section>
 

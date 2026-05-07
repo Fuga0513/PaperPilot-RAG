@@ -36,6 +36,8 @@ createApp({
             isComposing: false,
             citations: [],
             ragTrace: null,
+            traceExpanded: true,
+            traceResultsExpanded: false,
             toolCalls: [],
 
             selectedFile: null,
@@ -870,6 +872,26 @@ createApp({
                 name: trace?.tool_name || 'search_knowledge_base',
                 detail: trace?.retrieval_stage || 'retrieval'
             }];
+        },
+
+        traceResults(key) {
+            // Return a safe trace result list for the collapsible RAG Trace panel.
+            const value = this.ragTrace?.[key];
+            return Array.isArray(value) ? value : [];
+        },
+
+        traceChunkLabel(chunk, index) {
+            // Compact label for one retrieved chunk in the trace panel.
+            const citation = chunk.citation_id ? `[${chunk.citation_id}] ` : '';
+            const title = chunk.paper_title || chunk.filename || 'Unknown source';
+            const section = chunk.section_title ? ` - ${chunk.section_title}` : '';
+            return `${index + 1}. ${citation}${title}${section}`;
+        },
+
+        formatScore(value) {
+            if (value === null || value === undefined || value === '') return '-';
+            const number = Number(value);
+            return Number.isFinite(number) ? number.toFixed(4) : String(value);
         },
 
         syncInspectorFromMessages() {
