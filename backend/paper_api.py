@@ -5,8 +5,12 @@ Upload parsing and Milvus deletion are intentionally deferred to later stages.
 """
 
 import logging
+import hashlib
+import re
+from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_db
@@ -23,10 +27,70 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR.parent / "data"
+PAPER_UPLOAD_ROOT = DATA_DIR / "uploads"
+SUPPORTED_PAPER_SUFFIXES = {".pdf", ".docx", ".txt"}
+
 
 def _dt(value) -> str:
     """Serialize nullable datetimes for API responses."""
     return value.isoformat() if value else ""
+
+
+def _safe_filename(filename: str) -> str:
+    """Return a path-safe basename while preserving a readable filename."""
+    name = Path(filename or "").name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    if not safe:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return safe[:180]
+
+
+def _validate_paper_file(filename: str) -> str:
+    """Validate paper upload type and return the lowercase suffix."""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUPPORTED_PAPER_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Only PDF, DOCX, and TXT files are supported")
+    return suffix
+
+
+def _build_user_paper_path(user_id: int, original_filename: str) -> tuple[Path, str]:
+    """Build an isolated per-user paper path.
+
+    Same-user same-name uploads are renamed with a short UUID instead of
+    overwritten. This keeps upload history stable and avoids accidental data loss.
+    """
+    safe_name = _safe_filename(original_filename)
+    suffix = _validate_paper_file(safe_name)
+    stem = Path(safe_name).stem[:120] or "paper"
+    stored_filename = f"{stem}_{uuid4().hex[:12]}{suffix}"
+    user_dir = PAPER_UPLOAD_ROOT / str(user_id) / "papers"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir / stored_filename, stored_filename
+
+
+async def _save_upload_and_hash(file: UploadFile, file_path: Path) -> str:
+    """Save an uploaded file in chunks and return its SHA256 hash."""
+    digest = hashlib.sha256()
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                f.write(chunk)
+    except Exception:
+        if file_path.exists():
+            try:
+                file_path.unlink()
+            except OSError:
+                pass
+        raise
+    return digest.hexdigest()
 
 
 def _paper_to_out(paper: Paper) -> PaperOut:
@@ -123,6 +187,48 @@ async def list_papers(
     except Exception as exc:
         logger.exception("Failed to list papers for user_id=%s", current_user.id)
         raise HTTPException(status_code=500, detail="Failed to list papers") from exc
+
+
+@router.post("/upload", response_model=PaperDetailOut)
+async def upload_paper(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a user-owned paper file and create its Paper row.
+
+    Stage 7 intentionally stops at file persistence + PostgreSQL metadata.
+    Parsing, chunking, embedding, and Milvus indexing are handled later.
+    """
+    original_filename = _safe_filename(file.filename or "")
+    file_path, stored_filename = _build_user_paper_path(current_user.id, original_filename)
+    try:
+        file_hash = await _save_upload_and_hash(file, file_path)
+        paper = Paper(
+            owner_id=current_user.id,
+            filename=stored_filename,
+            original_filename=original_filename,
+            title="",
+            authors="",
+            year=None,
+            venue="",
+            abstract="",
+            keywords="",
+            file_path=str(file_path),
+            file_hash=file_hash,
+            status="uploaded",
+        )
+        db.add(paper)
+        db.commit()
+        db.refresh(paper)
+        base = _paper_to_out(paper).model_dump()
+        return PaperDetailOut(**base, chunk_count=0, metadata=None)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to upload paper for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to upload paper") from exc
 
 
 @router.get("/{paper_id}", response_model=PaperDetailOut)

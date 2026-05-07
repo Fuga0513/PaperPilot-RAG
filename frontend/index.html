@@ -86,8 +86,8 @@
                 <section class="sidebar-section">
                     <h3>Current Paper</h3>
                     <div v-if="selectedPaper" class="selected-paper">
-                        <strong>{{ selectedPaper.filename }}</strong>
-                        <span>{{ selectedPaper.file_type }} · {{ selectedPaper.chunk_count }} chunks</span>
+                        <strong>{{ formatPaperTitle(selectedPaper) }}</strong>
+                        <span>{{ selectedPaper.status }} · {{ formatDate(selectedPaper.created_at) }}</span>
                     </div>
                     <p v-else class="muted">No paper selected.</p>
                 </section>
@@ -129,27 +129,53 @@
                             <div class="panel-header">
                                 <div>
                                     <h2>Paper Library</h2>
-                                    <p v-if="!isAdmin">Paper API will be available in the next stage.</p>
-                                    <p v-else>管理员文档库沿用当前 /documents 接口。</p>
+                                    <p>Your uploaded papers are isolated by the current logged-in user.</p>
                                 </div>
-                                <button class="secondary-action" :disabled="loading.documents || !isAdmin" @click="loadDocuments">
-                                    <i :class="loading.documents ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
+                                <button class="secondary-action" :disabled="loading.papers" @click="loadPapers">
+                                    <i :class="loading.papers ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
                                 </button>
                             </div>
-                            <div v-if="!isAdmin" class="empty-state">普通用户论文库将在下一阶段接入用户隔离的 Paper API。</div>
-                            <div v-else-if="loading.documents" class="empty-state">Loading papers...</div>
-                            <div v-else-if="papers.length === 0" class="empty-state">No papers uploaded yet.</div>
-                            <div v-else class="paper-list">
-                                <button
-                                    v-for="paper in papers"
-                                    :key="paper.filename"
-                                    :class="['paper-item', {active: selectedPaper?.filename === paper.filename}]"
-                                    @click="selectPaper(paper)"
-                                >
-                                    <i :class="getFileIcon(paper.file_type)"></i>
-                                    <span>{{ paper.filename }}</span>
-                                    <small>{{ paper.file_type }} · {{ paper.chunk_count }} chunks</small>
-                                </button>
+                            <div class="library-layout">
+                                <div class="library-list">
+                                    <div v-if="loading.papers" class="empty-state">Loading papers...</div>
+                                    <div v-else-if="papers.length === 0" class="empty-state">No papers uploaded yet.</div>
+                                    <div v-else class="paper-list">
+                                        <button
+                                            v-for="paper in papers"
+                                            :key="paper.id"
+                                            :class="['paper-item', {active: selectedPaper?.id === paper.id}]"
+                                            @click="selectPaper(paper)"
+                                        >
+                                            <i :class="getPaperIcon(paper.filename)"></i>
+                                            <span>{{ formatPaperTitle(paper) }}</span>
+                                            <small>{{ paper.authors || 'Authors pending' }}</small>
+                                            <small>{{ paper.year || '-' }} · {{ paper.venue || 'Venue pending' }} · {{ paper.status }}</small>
+                                            <small>Uploaded {{ formatDate(paper.created_at) }}</small>
+                                        </button>
+                                    </div>
+                                </div>
+                                <aside class="paper-detail">
+                                    <div v-if="!selectedPaper" class="empty-state compact">Select a paper to view details.</div>
+                                    <div v-else-if="loading.paperDetail" class="empty-state compact">Loading paper detail...</div>
+                                    <template v-else>
+                                        <h3>{{ formatPaperTitle(selectedPaperDetail || selectedPaper) }}</h3>
+                                        <dl>
+                                            <dt>Authors</dt>
+                                            <dd>{{ (selectedPaperDetail || selectedPaper).authors || 'Not available yet.' }}</dd>
+                                            <dt>Abstract</dt>
+                                            <dd>{{ (selectedPaperDetail || selectedPaper).abstract || 'Not available yet.' }}</dd>
+                                            <dt>Status</dt>
+                                            <dd>{{ (selectedPaperDetail || selectedPaper).status }}</dd>
+                                            <dt>Filename</dt>
+                                            <dd>{{ (selectedPaperDetail || selectedPaper).original_filename || (selectedPaperDetail || selectedPaper).filename }}</dd>
+                                        </dl>
+                                        <div class="metadata-box">
+                                            <strong>Metadata</strong>
+                                            <p v-if="!(selectedPaperDetail && selectedPaperDetail.metadata)">Metadata not available yet.</p>
+                                            <pre v-else>{{ selectedPaperDetail.metadata.raw_json }}</pre>
+                                        </div>
+                                    </template>
+                                </aside>
                             </div>
                         </section>
 
@@ -157,20 +183,18 @@
                             <div class="panel-header">
                                 <div>
                                     <h2>Upload Paper</h2>
-                                    <p v-if="isAdmin">Upload PDF, Word, or Excel documents into the current knowledge base.</p>
-                                    <p v-else>当前上传接口仍保留管理员权限，普通用户论文上传将在下一阶段扩展。</p>
+                                    <p>Upload PDF, DOCX, or TXT files into your private Paper Library.</p>
                                 </div>
                             </div>
-                            <div v-if="!isAdmin" class="empty-state">Only admins can use the existing document upload endpoint.</div>
-                            <div v-else class="upload-area">
-                                <input ref="fileInput" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" @change="handleFileSelect">
+                            <div class="upload-area">
+                                <input ref="fileInput" type="file" accept=".pdf,.docx,.txt" :disabled="isUploading" @change="handleFileSelect">
                                 <div v-if="selectedFile" class="selected-file">
                                     <i class="fas fa-file"></i>
                                     <span>{{ selectedFile.name }}</span>
                                 </div>
                                 <button class="primary-action" :disabled="isUploading || !selectedFile" @click="uploadDocument">
                                     <i :class="isUploading ? 'fas fa-spinner fa-spin' : 'fas fa-cloud-arrow-up'"></i>
-                                    {{ isUploading ? 'Uploading...' : 'Start Upload' }}
+                                    {{ isUploading ? 'Uploading...' : 'Upload Paper' }}
                                 </button>
                                 <div v-if="uploadProgress" class="upload-status">{{ uploadProgress }}</div>
                                 <div v-if="uploadSteps.length" class="upload-step-list">
@@ -227,7 +251,7 @@
                             <div ref="chatContainer" class="chat-container">
                                 <div v-if="messages.length === 0" class="welcome-screen">
                                     <h3>Ask your research question</h3>
-                                    <p>Upload papers as an admin, then ask PaperPilot-RAG to retrieve, cite, and reason over the knowledge base.</p>
+                                    <p>Upload papers to your library, then ask PaperPilot-RAG to retrieve, cite, and reason over the knowledge base.</p>
                                 </div>
 
                                 <article v-for="(msg, index) in messages" :key="index" :class="['message', msg.isUser ? 'user-message' : 'bot-message']">

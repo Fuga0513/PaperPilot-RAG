@@ -20,6 +20,7 @@ createApp({
             activeNav: 'chat',
             papers: [],
             selectedPaper: null,
+            selectedPaperDetail: null,
             documents: [],
             sessions: [],
             currentSessionId: 'session_' + Date.now(),
@@ -45,7 +46,7 @@ createApp({
             deletePollTimers: {},
             deleteRemoveTimers: {},
 
-            loading: { user: false, sessions: false, documents: false },
+            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false },
             documentsLoading: false,
             errorMessage: ''
         };
@@ -185,6 +186,7 @@ createApp({
             try {
                 await this.loadCurrentUser();
                 await this.loadSessions();
+                await this.loadPapers();
                 if (this.isAdmin) await this.loadDocuments();
             } catch (error) {
                 this.showError(error.message);
@@ -274,6 +276,7 @@ createApp({
             this.papers = [];
             this.documents = [];
             this.selectedPaper = null;
+            this.selectedPaperDetail = null;
             this.citations = [];
             this.ragTrace = null;
             this.toolCalls = [];
@@ -353,8 +356,71 @@ createApp({
             // Switch main panels and load data on demand.
             this.activeNav = panel;
             this.clearError();
-            if (panel === 'library' && this.isAdmin) this.loadDocuments();
+            if (panel === 'library') this.loadPapers();
             if (panel === 'history') this.loadSessions();
+        },
+
+        async uploadPaperFile(file) {
+            // POST /papers/upload, then return the created user-owned Paper detail.
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await this.apiRequest('/papers/upload', {
+                method: 'POST',
+                body: formData
+            });
+            return response.json();
+        },
+
+        async loadPapers() {
+            // GET /papers and refresh the current user's Paper Library list.
+            if (!this.requireAuth()) return;
+            this.loading.papers = true;
+            try {
+                const papers = await this.apiGet('/papers');
+                this.papers = Array.isArray(papers) ? papers : [];
+                this.syncSelectedPaperAfterRefresh();
+            } catch (error) {
+                this.showError('Failed to load papers: ' + error.message);
+            } finally {
+                this.loading.papers = false;
+            }
+        },
+
+        async loadPaperDetail(paperId) {
+            // GET /papers/{paper_id} and show the selected paper detail panel.
+            this.loading.paperDetail = true;
+            try {
+                this.selectedPaperDetail = await this.apiGet(`/papers/${encodeURIComponent(paperId)}`);
+            } catch (error) {
+                this.showError('Failed to load paper detail: ' + error.message);
+            } finally {
+                this.loading.paperDetail = false;
+            }
+        },
+
+        async selectPaper(paper) {
+            // Select a paper row and load its protected detail from GET /papers/{id}.
+            this.selectedPaper = paper;
+            this.selectedPaperDetail = null;
+            if (paper?.id) await this.loadPaperDetail(paper.id);
+        },
+
+        formatPaperTitle(paper) {
+            // Prefer extracted title; fall back to original or stored filename.
+            if (!paper) return 'Untitled paper';
+            return paper.title || paper.original_filename || paper.filename || 'Untitled paper';
+        },
+
+        syncSelectedPaperAfterRefresh() {
+            // Keep selection stable after GET /papers refreshes the list.
+            if (!this.selectedPaper) return;
+            const next = this.papers.find(item => item.id === this.selectedPaper.id);
+            if (next) {
+                this.selectedPaper = next;
+                return;
+            }
+            this.selectedPaper = null;
+            this.selectedPaperDetail = null;
         },
 
         async loadDocuments() {
@@ -368,7 +434,6 @@ createApp({
             try {
                 const data = await this.apiGet('/documents');
                 this.documents = this.mergeDocumentsWithActiveDeletes(data.documents || []);
-                this.papers = this.documents;
             } catch (error) {
                 this.showError('Failed to load documents: ' + error.message);
             } finally {
@@ -377,17 +442,12 @@ createApp({
             }
         },
 
-        selectPaper(paper) {
-            // Track the selected paper for the sidebar and future paper-scoped tools.
-            this.selectedPaper = paper;
-        },
-
         handleFileSelect(event) {
             // Store selected upload file and reset the progress state.
             const files = event.target.files;
             this.selectedFile = files && files.length > 0 ? files[0] : null;
             this.uploadProgress = '';
-            this.uploadSteps = this.createUploadSteps();
+            this.uploadSteps = [];
         },
 
         createUploadSteps() {
@@ -453,20 +513,23 @@ createApp({
         },
 
         async uploadDocument() {
-            // Start admin document upload and then poll the job endpoint.
+            // Upload a user-owned paper through POST /papers/upload.
             if (!this.selectedFile || this.isUploading) return;
             this.isUploading = true;
             this.uploadProgress = 'Uploading...';
-            this.uploadSteps = this.createUploadSteps();
+            this.uploadSteps = [];
             try {
-                const data = await this.uploadFileWithProgress(this.selectedFile);
-                this.uploadProgress = data.message;
-                this.activeUploadJobId = data.job_id;
-                this.startUploadJobPolling(data.job_id);
+                const paper = await this.uploadPaperFile(this.selectedFile);
+                this.uploadProgress = 'Paper uploaded successfully.';
+                this.selectedFile = null;
+                if (this.$refs.fileInput) this.$refs.fileInput.value = '';
+                await this.loadPapers();
+                await this.selectPaper(paper);
+                this.activeNav = 'library';
             } catch (error) {
-                this.updateUploadStep('upload', 100, 'failed', error.message);
                 this.uploadProgress = 'Upload failed: ' + error.message;
                 this.showError(this.uploadProgress);
+            } finally {
                 this.isUploading = false;
             }
         },
@@ -787,6 +850,14 @@ createApp({
             if (fileType === 'PDF') return 'fas fa-file-pdf';
             if (fileType === 'Word') return 'fas fa-file-word';
             if (fileType === 'Excel') return 'fas fa-file-excel';
+            return 'fas fa-file';
+        },
+
+        getPaperIcon(filename) {
+            const lower = (filename || '').toLowerCase();
+            if (lower.endsWith('.pdf')) return 'fas fa-file-pdf';
+            if (lower.endsWith('.docx')) return 'fas fa-file-word';
+            if (lower.endsWith('.txt')) return 'fas fa-file-lines';
             return 'fas fa-file';
         },
 
