@@ -23,7 +23,7 @@ load_dotenv()
 AMAP_WEATHER_API = os.getenv("AMAP_WEATHER_API")
 AMAP_API_KEY = os.getenv("AMAP_API_KEY")
 
-_LAST_RAG_CONTEXT = None
+_LAST_RAG_CONTEXT = None  
 _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
 _RAG_STEP_QUEUE = None
 _RAG_STEP_LOOP = None
@@ -71,6 +71,7 @@ class RelatedWorkInput(BaseModel):
     constraints: str = Field("", description="Optional scope, venue, time range, or style constraints.")
 
 
+# 用户上下文管理：记住“现在是谁在提问”
 def set_tool_user_context(user_id: str | None, role: str | None = None) -> None:
     """Set the current request user context for future retrieval filters.
 
@@ -85,7 +86,7 @@ def get_tool_user_context() -> Optional[dict]:
     """Return the current request context reserved for tool-side filtering."""
     return _CURRENT_TOOL_USER_CONTEXT
 
-
+# RAG Trace 管理：记录“思考和搜索的痕迹”
 def _set_last_rag_context(context: dict) -> None:
     global _LAST_RAG_CONTEXT
     _LAST_RAG_CONTEXT = context
@@ -100,12 +101,27 @@ def get_last_rag_context(clear: bool = True) -> Optional[dict]:
     return context
 
 
+# 工具调用频率管理：限制“每轮思考只能调用一次检索工具”
 def reset_tool_call_guards() -> None:
     """Reset per-turn retrieval guard counters."""
     global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
     _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
 
 
+def _acquire_research_search_slot(tool_name: str) -> Optional[str]:
+    """Allow at most one retrieval-style tool call in a single Agent turn."""
+    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
+    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= 1:
+        return (
+            f"TOOL_CALL_LIMIT_REACHED: {tool_name} or another retrieval tool has already "
+            "been called once in this turn. Use the existing retrieval result and provide "
+            "the final answer directly."
+        )
+    _KNOWLEDGE_TOOL_CALLS_THIS_TURN += 1
+    return None
+
+
+# RAG 步骤队列管理：设置用于推送实时 RAG 步骤事件的队列
 def set_rag_step_queue(queue) -> None:
     """Set the queue used by rag_pipeline to push live RAG step events."""
     global _RAG_STEP_QUEUE, _RAG_STEP_LOOP
@@ -133,19 +149,7 @@ def emit_rag_step(icon: str, label: str, detail: str = "") -> None:
         pass
 
 
-def _acquire_research_search_slot(tool_name: str) -> Optional[str]:
-    """Allow at most one retrieval-style tool call in a single Agent turn."""
-    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
-    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= 1:
-        return (
-            f"TOOL_CALL_LIMIT_REACHED: {tool_name} or another retrieval tool has already "
-            "been called once in this turn. Use the existing retrieval result and provide "
-            "the final answer directly."
-        )
-    _KNOWLEDGE_TOOL_CALLS_THIS_TURN += 1
-    return None
-
-
+# 格式化从知识库查回来的文档片段 -→ [1] 论文A.pdf (Page 5, Chunk 23)：这里是论文里的一段内容...
 def _format_retrieved_chunks(docs: list[dict]) -> str:
     """Format retrieved chunks for the Agent while preserving citation anchors."""
     formatted = []
@@ -158,6 +162,7 @@ def _format_retrieved_chunks(docs: list[dict]) -> str:
     return "Retrieved Chunks:\n" + "\n\n---\n\n".join(formatted)
 
 
+# 执行一次 RAG 检索
 def _run_research_rag_search(query: str, tool_name: str) -> str:
     """Run the existing custom RAG graph for a research search tool."""
     limit_message = _acquire_research_search_slot(tool_name)
