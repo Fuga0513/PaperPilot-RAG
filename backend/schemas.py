@@ -199,6 +199,7 @@ class PaperChunkOut(BaseModel):
     id: int
     paper_id: int
     chunk_id: str
+    paper_title: str = ""
     section_title: str
     subsection_title: str
     page_start: Optional[int] = None

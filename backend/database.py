@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv(
@@ -20,3 +20,18 @@ def init_db() -> None:
     import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _apply_lightweight_migrations()
+
+
+def _apply_lightweight_migrations() -> None:
+    """Apply small additive schema fixes for create_all-based local development.
+
+    SQLAlchemy create_all creates missing tables but does not alter existing
+    tables. Until this project adopts Alembic, keep only safe, additive changes
+    here so older local databases can start after model fields are added.
+    """
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE paper_chunks "
+            "ADD COLUMN IF NOT EXISTS paper_title VARCHAR(500) NOT NULL DEFAULT ''"
+        ))

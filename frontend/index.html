@@ -159,6 +159,14 @@
                                     <div v-else-if="loading.paperDetail" class="empty-state compact">Loading paper detail...</div>
                                     <template v-else>
                                         <h3>{{ formatPaperTitle(selectedPaperDetail || selectedPaper) }}</h3>
+                                        <button
+                                            class="secondary-action detail-action"
+                                            :disabled="loading.paperDetail || isParsingPaper"
+                                            @click="parseSelectedPaper"
+                                        >
+                                            <i :class="isParsingPaper ? 'fas fa-spinner fa-spin' : 'fas fa-wand-magic-sparkles'"></i>
+                                            {{ isParsingPaper ? 'Parsing...' : 'Parse / Reparse' }}
+                                        </button>
                                         <dl>
                                             <dt>Authors</dt>
                                             <dd>{{ (selectedPaperDetail || selectedPaper).authors || 'Not available yet.' }}</dd>
@@ -166,6 +174,8 @@
                                             <dd>{{ (selectedPaperDetail || selectedPaper).abstract || 'Not available yet.' }}</dd>
                                             <dt>Status</dt>
                                             <dd>{{ (selectedPaperDetail || selectedPaper).status }}</dd>
+                                            <dt>Chunks</dt>
+                                            <dd>{{ selectedPaperDetail?.chunk_count ?? 'Not parsed yet.' }}</dd>
                                             <dt>Filename</dt>
                                             <dd>{{ (selectedPaperDetail || selectedPaper).original_filename || (selectedPaperDetail || selectedPaper).filename }}</dd>
                                         </dl>

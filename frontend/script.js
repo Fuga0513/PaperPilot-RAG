@@ -21,6 +21,7 @@ createApp({
             papers: [],
             selectedPaper: null,
             selectedPaperDetail: null,
+            isParsingPaper: false,
             documents: [],
             sessions: [],
             currentSessionId: 'session_' + Date.now(),
@@ -405,6 +406,24 @@ createApp({
             if (paper?.id) await this.loadPaperDetail(paper.id);
         },
 
+        async parseSelectedPaper() {
+            // POST /papers/{id}/parse to re-run section-aware parsing for this paper.
+            const paperId = this.selectedPaper?.id;
+            if (!paperId || this.isParsingPaper) return;
+            this.isParsingPaper = true;
+            try {
+                const detail = await this.apiPost(`/papers/${encodeURIComponent(paperId)}/parse`, {});
+                this.selectedPaperDetail = detail;
+                await this.loadPapers();
+                this.selectedPaper = this.papers.find(item => item.id === paperId) || detail;
+            } catch (error) {
+                this.showError('Failed to parse paper: ' + error.message);
+                await this.loadPaperDetail(paperId);
+            } finally {
+                this.isParsingPaper = false;
+            }
+        },
+
         formatPaperTitle(paper) {
             // Prefer extracted title; fall back to original or stored filename.
             if (!paper) return 'Untitled paper';
@@ -520,7 +539,10 @@ createApp({
             this.uploadSteps = [];
             try {
                 const paper = await this.uploadPaperFile(this.selectedFile);
-                this.uploadProgress = 'Paper uploaded successfully.';
+                this.uploadProgress = paper.status === 'failed'
+                    ? 'Paper uploaded, but parsing failed. Check the library status.'
+                    : 'Paper uploaded and parsed successfully.';
+                if (paper.status === 'failed') this.showError(this.uploadProgress);
                 this.selectedFile = null;
                 if (this.$refs.fileInput) this.$refs.fileInput.value = '';
                 await this.loadPapers();

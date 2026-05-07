@@ -103,6 +103,7 @@ class PaperChunk(Base):
     paper_id: Mapped[int] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     chunk_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    paper_title: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     section_title: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     subsection_title: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)

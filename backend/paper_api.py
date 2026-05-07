@@ -7,6 +7,7 @@ Upload parsing and Milvus deletion are intentionally deferred to later stages.
 import logging
 import hashlib
 import re
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_db
 from models import Paper, PaperChunk, PaperMetadata, User
+from paper_parser import ResearchPaperParser
 from schemas import (
     PaperChunkOut,
     PaperDeleteResponse,
@@ -31,6 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
 PAPER_UPLOAD_ROOT = DATA_DIR / "uploads"
 SUPPORTED_PAPER_SUFFIXES = {".pdf", ".docx", ".txt"}
+paper_parser = ResearchPaperParser()
 
 
 def _dt(value) -> str:
@@ -39,11 +42,22 @@ def _dt(value) -> str:
 
 
 def _safe_filename(filename: str) -> str:
-    """Return a path-safe basename while preserving a readable filename."""
+    """Return a path-safe basename while preserving Unicode names.
+
+    Path traversal is blocked by taking only the basename. We keep Chinese and
+    other Unicode word characters for readability, while replacing characters
+    that are unsafe on Windows/Linux filesystems.
+    """
     name = Path(filename or "").name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Filename is required")
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    stem = Path(name).stem.strip()
+    suffix = Path(name).suffix.lower()
+    if not suffix:
+        raise HTTPException(status_code=400, detail="Filename extension is required")
+    safe_stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", stem, flags=re.UNICODE).strip(" ._")
+    safe_suffix = re.sub(r"[^A-Za-z0-9.]+", "", suffix)
+    safe = f"{safe_stem or 'paper'}{safe_suffix}"
     if not safe:
         raise HTTPException(status_code=400, detail="Invalid filename")
     return safe[:180]
@@ -139,6 +153,7 @@ def _chunk_to_out(chunk: PaperChunk) -> PaperChunkOut:
         id=chunk.id,
         paper_id=chunk.paper_id,
         chunk_id=chunk.chunk_id,
+        paper_title=chunk.paper_title,
         section_title=chunk.section_title,
         subsection_title=chunk.subsection_title,
         page_start=chunk.page_start,
@@ -166,6 +181,49 @@ def _get_owned_paper(db: Session, paper_id: int, current_user: User) -> Paper:
     if not paper:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paper not found")
     return paper
+
+
+def _store_parsed_chunks(db: Session, paper: Paper, chunks: list[dict]) -> int:
+    """Replace a paper's parsed chunks with newly generated PaperChunk rows."""
+    db.query(PaperChunk).filter(
+        PaperChunk.paper_id == paper.id,
+        PaperChunk.owner_id == paper.owner_id,
+    ).delete(synchronize_session=False)
+    rows = [
+        PaperChunk(
+            paper_id=paper.id,
+            owner_id=paper.owner_id,
+            chunk_id=item["chunk_id"],
+            paper_title=item.get("paper_title", ""),
+            section_title=item.get("section_title") or "Unknown",
+            subsection_title=item.get("subsection_title") or "",
+            page_start=item.get("page_start"),
+            page_end=item.get("page_end"),
+            chunk_level=int(item.get("chunk_level") or 1),
+            parent_chunk_id=item.get("parent_chunk_id") or "",
+            root_chunk_id=item.get("root_chunk_id") or "",
+            chunk_type=item.get("chunk_type") or "unknown",
+            text=item.get("text") or "",
+        )
+        for item in chunks
+        if item.get("text")
+    ]
+    db.add_all(rows)
+    return len(rows)
+
+
+def _parse_and_index_paper_chunks(db: Session, paper: Paper) -> int:
+    """Parse the uploaded file and write section-aware chunks to PostgreSQL."""
+    chunks = paper_parser.parse_file(
+        file_path=paper.file_path,
+        filename=paper.filename,
+        paper_id=paper.id,
+        owner_id=paper.owner_id,
+        paper_title=paper.title,
+    )
+    if not chunks:
+        raise ValueError("No chunks were generated from the uploaded paper")
+    return _store_parsed_chunks(db, paper, chunks)
 
 
 @router.get("", response_model=list[PaperOut])
@@ -216,13 +274,30 @@ async def upload_paper(
             keywords="",
             file_path=str(file_path),
             file_hash=file_hash,
-            status="uploaded",
+            status="parsing",
         )
         db.add(paper)
         db.commit()
         db.refresh(paper)
+        chunk_count = 0
+        try:
+            chunk_count = _parse_and_index_paper_chunks(db, paper)
+            paper.status = "parsed"
+            paper.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(paper)
+        except Exception as parse_exc:
+            db.rollback()
+            paper = db.query(Paper).filter(Paper.id == paper.id, Paper.owner_id == current_user.id).first()
+            if paper:
+                paper.status = "failed"
+                paper.updated_at = datetime.utcnow()
+                db.commit()
+                db.refresh(paper)
+            logger.exception("Failed to parse uploaded paper_id=%s user_id=%s", paper.id if paper else None, current_user.id)
+
         base = _paper_to_out(paper).model_dump()
-        return PaperDetailOut(**base, chunk_count=0, metadata=None)
+        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=None)
     except HTTPException:
         raise
     except Exception as exc:
@@ -259,6 +334,47 @@ async def get_paper(
     except Exception as exc:
         logger.exception("Failed to get paper_id=%s for user_id=%s", paper_id, current_user.id)
         raise HTTPException(status_code=500, detail="Failed to get paper") from exc
+
+
+@router.post("/{paper_id}/parse", response_model=PaperDetailOut)
+async def parse_paper(
+    paper_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-parse one current-user-owned paper and replace its PaperChunk rows.
+
+    This is useful for older uploads or failed parses after local schema changes.
+    Milvus indexing is still intentionally deferred to later stages.
+    """
+    try:
+        paper = _get_owned_paper(db, paper_id, current_user)
+        paper.status = "parsing"
+        paper.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(paper)
+
+        chunk_count = _parse_and_index_paper_chunks(db, paper)
+        paper.status = "parsed"
+        paper.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(paper)
+
+        base = _paper_to_out(paper).model_dump()
+        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=None)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        try:
+            paper = _get_owned_paper(db, paper_id, current_user)
+            paper.status = "failed"
+            paper.updated_at = datetime.utcnow()
+            db.commit()
+        except Exception:
+            db.rollback()
+        logger.exception("Failed to parse paper_id=%s for user_id=%s", paper_id, current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to parse paper") from exc
 
 
 @router.get("/{paper_id}/chunks", response_model=list[PaperChunkOut])
