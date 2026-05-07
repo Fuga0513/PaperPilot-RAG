@@ -38,6 +38,16 @@ class RetrievedChunk(BaseModel):
     score: Optional[float] = None
     rrf_rank: Optional[int] = None
     rerank_score: Optional[float] = None
+    source_type: Optional[str] = None
+    paper_id: Optional[int] = None
+    paper_title: Optional[str] = None
+    section_title: Optional[str] = None
+    subsection_title: Optional[str] = None
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    chunk_type: Optional[str] = None
+    year: Optional[int] = None
+    venue: Optional[str] = None
 
 
 class RagTrace(BaseModel):
@@ -61,6 +71,8 @@ class RagTrace(BaseModel):
     rerank_endpoint: Optional[str] = None
     rerank_error: Optional[str] = None
     retrieval_mode: Optional[str] = None
+    retrieval_scope: Optional[str] = None
+    owner_filter_applied: Optional[bool] = None
     candidate_k: Optional[int] = None
     leaf_retrieve_level: Optional[int] = None
     auto_merge_enabled: Optional[bool] = None

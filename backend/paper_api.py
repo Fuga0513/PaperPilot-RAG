@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_db
 from models import Paper, PaperChunk, PaperMetadata, User
+from paper_indexer import MilvusSchemaError, index_paper_chunks, remove_paper_vectors
 from paper_metadata_extractor import extract_and_store_metadata
 from paper_parser import ResearchPaperParser
 from schemas import (
@@ -175,6 +176,20 @@ def _chunk_to_out(chunk: PaperChunk) -> PaperChunkOut:
     )
 
 
+def _paper_detail_to_out(db: Session, paper: Paper, owner_id: int) -> PaperDetailOut:
+    """Build the common paper detail response after parse/index status changes."""
+    chunk_count = db.query(PaperChunk).filter(
+        PaperChunk.paper_id == paper.id,
+        PaperChunk.owner_id == owner_id,
+    ).count()
+    metadata = db.query(PaperMetadata).filter(
+        PaperMetadata.paper_id == paper.id,
+        PaperMetadata.owner_id == owner_id,
+    ).first()
+    base = _paper_to_out(paper).model_dump()
+    return PaperDetailOut(**base, chunk_count=chunk_count, metadata=_metadata_to_out(metadata))
+
+
 def _get_owned_paper(db: Session, paper_id: int, current_user: User) -> Paper:
     """Fetch one paper scoped to the logged-in user.
 
@@ -255,6 +270,40 @@ def _extract_metadata_after_parse(db: Session, paper: Paper) -> bool:
         return False
 
 
+def _index_paper_after_parse(db: Session, paper: Paper) -> int:
+    """Write parsed leaf chunks into Milvus and mark the paper indexed."""
+    try:
+        paper.status = "indexing"
+        paper.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(paper)
+
+        indexed_count = index_paper_chunks(db, paper)
+        paper.status = "indexed"
+        paper.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(paper)
+        return indexed_count
+    except MilvusSchemaError:
+        db.rollback()
+        paper = db.query(Paper).filter(Paper.id == paper.id, Paper.owner_id == paper.owner_id).first()
+        if paper:
+            paper.status = "index_failed"
+            paper.updated_at = datetime.utcnow()
+            db.commit()
+        logger.exception("Milvus schema is not ready for paper indexing paper_id=%s", paper.id if paper else None)
+        raise
+    except Exception:
+        db.rollback()
+        paper = db.query(Paper).filter(Paper.id == paper.id, Paper.owner_id == paper.owner_id).first()
+        if paper:
+            paper.status = "index_failed"
+            paper.updated_at = datetime.utcnow()
+            db.commit()
+        logger.exception("Failed to index paper_id=%s", paper.id if paper else None)
+        raise
+
+
 @router.get("", response_model=list[PaperOut])
 async def list_papers(
     current_user: User = Depends(get_current_user),
@@ -317,15 +366,18 @@ async def upload_paper(
             db.refresh(paper)
             _extract_metadata_after_parse(db, paper)
             db.refresh(paper)
+            _index_paper_after_parse(db, paper)
+            db.refresh(paper)
         except Exception as parse_exc:
             db.rollback()
             paper = db.query(Paper).filter(Paper.id == paper.id, Paper.owner_id == current_user.id).first()
             if paper:
-                paper.status = "failed"
+                if paper.status not in ("index_failed",):
+                    paper.status = "failed"
                 paper.updated_at = datetime.utcnow()
                 db.commit()
                 db.refresh(paper)
-            logger.exception("Failed to parse uploaded paper_id=%s user_id=%s", paper.id if paper else None, current_user.id)
+            logger.exception("Failed to parse or index uploaded paper_id=%s user_id=%s", paper.id if paper else None, current_user.id)
 
         metadata = db.query(PaperMetadata).filter(
             PaperMetadata.paper_id == paper.id,
@@ -396,26 +448,54 @@ async def parse_paper(
         db.refresh(paper)
         _extract_metadata_after_parse(db, paper)
         db.refresh(paper)
+        try:
+            _index_paper_after_parse(db, paper)
+            db.refresh(paper)
+        except MilvusSchemaError:
+            # Parsing succeeded. Keep the paper usable in the library and expose
+            # index_failed so the user can rebuild Milvus schema and retry.
+            logger.warning(
+                "Paper parsed but Milvus schema is not ready paper_id=%s user_id=%s",
+                paper_id,
+                current_user.id,
+            )
+            paper = _get_owned_paper(db, paper_id, current_user)
 
-        base = _paper_to_out(paper).model_dump()
-        metadata = db.query(PaperMetadata).filter(
-            PaperMetadata.paper_id == paper.id,
-            PaperMetadata.owner_id == current_user.id,
-        ).first()
-        return PaperDetailOut(**base, chunk_count=chunk_count, metadata=_metadata_to_out(metadata))
+        return _paper_detail_to_out(db, paper, current_user.id)
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
         try:
             paper = _get_owned_paper(db, paper_id, current_user)
-            paper.status = "failed"
+            if paper.status != "index_failed":
+                paper.status = "failed"
             paper.updated_at = datetime.utcnow()
             db.commit()
         except Exception:
             db.rollback()
         logger.exception("Failed to parse paper_id=%s for user_id=%s", paper_id, current_user.id)
         raise HTTPException(status_code=500, detail="Failed to parse paper") from exc
+
+
+@router.post("/{paper_id}/index", response_model=PaperDetailOut)
+async def index_paper(
+    paper_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Index one current-user-owned parsed paper into Milvus."""
+    try:
+        paper = _get_owned_paper(db, paper_id, current_user)
+        _index_paper_after_parse(db, paper)
+        return _paper_detail_to_out(db, paper, current_user.id)
+    except MilvusSchemaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to index paper_id=%s for user_id=%s", paper_id, current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to index paper") from exc
 
 
 @router.get("/{paper_id}/chunks", response_model=list[PaperChunkOut])
@@ -454,11 +534,15 @@ async def delete_paper(
     """
     try:
         paper = _get_owned_paper(db, paper_id, current_user)
+        try:
+            remove_paper_vectors(paper)
+        except Exception:
+            logger.exception("Failed to remove paper vectors paper_id=%s user_id=%s", paper_id, current_user.id)
         db.delete(paper)
         db.commit()
         return PaperDeleteResponse(
             paper_id=paper_id,
-            message="Paper database record deleted. Vector cleanup will be added in a later stage.",
+            message="Paper database record and indexed vectors deleted.",
         )
     except HTTPException:
         raise

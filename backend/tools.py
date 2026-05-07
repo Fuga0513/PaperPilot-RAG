@@ -72,14 +72,14 @@ class RelatedWorkInput(BaseModel):
 
 
 # 用户上下文管理：记住“现在是谁在提问”
-def set_tool_user_context(user_id: str | None, role: str | None = None) -> None:
+def set_tool_user_context(user_id: str | None, role: str | None = None, owner_id: int | None = None) -> None:
     """Set the current request user context for future retrieval filters.
 
     Stage 5 only reserves this boundary. Once Paper/PaperChunk are user-owned,
     this user_id must be propagated into Milvus and PostgreSQL filters.
     """
     global _CURRENT_TOOL_USER_CONTEXT
-    _CURRENT_TOOL_USER_CONTEXT = {"user_id": user_id, "role": role}
+    _CURRENT_TOOL_USER_CONTEXT = {"user_id": user_id, "role": role, "owner_id": owner_id}
 
 
 def get_tool_user_context() -> Optional[dict]:
@@ -163,28 +163,27 @@ def _format_retrieved_chunks(docs: list[dict]) -> str:
 
 
 # 执行一次 RAG 检索
-def _run_research_rag_search(query: str, tool_name: str) -> str:
-    """Run the existing custom RAG graph for a research search tool."""
+def _run_rag_search(query: str, tool_name: str, source_type: str = "document") -> str:
+    """Run the custom RAG graph with legacy or private-paper retrieval scope."""
     limit_message = _acquire_research_search_slot(tool_name)
     if limit_message:
         return limit_message
 
     user_context = get_tool_user_context()
-    # TODO(user-scope): after Paper/PaperChunk models exist, pass
-    # user_context["user_id"] into run_rag_graph -> retrieve_documents ->
-    # Milvus filter_expr and ParentChunkStore lookup. Until then, the existing
-    # KB remains global/admin-oriented and must not be treated as private paper
-    # retrieval.
-    _ = user_context
+    owner_id = None
+    if source_type == "paper":
+        owner_id = (user_context or {}).get("owner_id")
+        if owner_id is None:
+            return "No authenticated user context is available for private paper retrieval."
 
     from rag_pipeline import run_rag_graph
 
-    rag_result = run_rag_graph(query)
+    rag_result = run_rag_graph(query, owner_id=owner_id, source_type=source_type)
     docs = rag_result.get("docs", []) if isinstance(rag_result, dict) else []
     rag_trace = rag_result.get("rag_trace", {}) if isinstance(rag_result, dict) else {}
     if rag_trace:
-        rag_trace.setdefault("tool_name", tool_name)
-        rag_trace.setdefault("user_context_reserved", bool(user_context))
+        rag_trace["tool_name"] = tool_name
+        rag_trace["user_context_reserved"] = bool(user_context)
         _set_last_rag_context({"rag_trace": rag_trace})
 
     if not docs:
@@ -260,12 +259,12 @@ def search_knowledge_base(query: str) -> str:
     numbered retrieved chunks with filename, page, chunk id, and text. The final
     answer must cite only these chunks and must not fabricate evidence.
     """
-    return _run_research_rag_search(query=query, tool_name="search_knowledge_base")
+    return _run_rag_search(query=query, tool_name="search_knowledge_base", source_type="document")
 
 
 def _search_research_documents(query: str) -> str:
     """Search research papers, project docs, reviews, and notes."""
-    return _run_research_rag_search(query=query, tool_name="search_research_documents")
+    return _run_rag_search(query=query, tool_name="search_research_documents", source_type="paper")
 
 
 def _summarize_paper(paper_id: str, question: str = "") -> str:
@@ -277,7 +276,7 @@ def _summarize_paper(paper_id: str, question: str = "") -> str:
     return (
         "summarize_paper is a PaperPilot research-tool skeleton. For now it runs "
         "the existing retrieval pipeline as supporting evidence.\n\n"
-        + _run_research_rag_search(query=query, tool_name="summarize_paper")
+        + _run_rag_search(query=query, tool_name="summarize_paper", source_type="paper")
     )
 
 

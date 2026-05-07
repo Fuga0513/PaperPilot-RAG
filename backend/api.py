@@ -53,7 +53,7 @@ router = APIRouter()
 def _remove_bm25_stats_for_filename(filename: str) -> None:
     """删除 Milvus 中该文件对应 chunk 前，先从持久化 BM25 统计中扣减。"""
     rows = milvus_manager.query_all(
-        filter_expr=f'filename == "{filename}"',
+        filter_expr=f'source_type == "document" and filename == "{filename}"',
         output_fields=["text"],
     )
     texts = [r.get("text") or "" for r in rows]
@@ -141,7 +141,13 @@ async def delete_session(session_id: str, current_user: User = Depends(get_curre
 async def chat_endpoint(request: ChatRequest, current_user: User = Depends(get_current_user)):
     try:
         session_id = request.session_id or "default_session"
-        resp = chat_with_agent(request.message, current_user.username, session_id)
+        resp = chat_with_agent(
+            request.message,
+            current_user.username,
+            session_id,
+            owner_id=current_user.id,
+            role=current_user.role,
+        )
         if isinstance(resp, dict):
             return ChatResponse(**resp)
         return ChatResponse(response=resp)
@@ -171,7 +177,13 @@ async def chat_stream_endpoint(request: ChatRequest, current_user: User = Depend
     async def event_generator():
         try:
             session_id = request.session_id or "default_session"
-            async for chunk in chat_with_agent_stream(request.message, current_user.username, session_id):
+            async for chunk in chat_with_agent_stream(
+                request.message,
+                current_user.username,
+                session_id,
+                owner_id=current_user.id,
+                role=current_user.role,
+            ):
                 yield chunk
         except Exception as e:
             error_data = {"type": "error", "content": str(e)}
@@ -216,7 +228,7 @@ def _process_upload_job(job_id: str, file_path: str, filename: str) -> None:
         failed_step = "cleanup"
         upload_job_manager.update_step(job_id, "cleanup", 10, "running", "正在清理同名旧文档")
         milvus_manager.init_collection()
-        delete_expr = f'filename == "{filename}"'
+        delete_expr = f'source_type == "document" and filename == "{filename}"'
         try:
             _remove_bm25_stats_for_filename(filename)
         except Exception:
@@ -290,7 +302,7 @@ def _process_delete_job(job_id: str, filename: str) -> None:
         failed_step = "prepare"
         delete_job_manager.update_step(job_id, "prepare", 20, "running", "正在初始化 Milvus 集合")
         milvus_manager.init_collection()
-        delete_expr = f'filename == "{filename}"'
+        delete_expr = f'source_type == "document" and filename == "{filename}"'
         delete_job_manager.complete_step(job_id, "prepare", "删除任务已创建")
 
         failed_step = "bm25"
@@ -322,6 +334,7 @@ async def list_documents(_: User = Depends(require_admin)):
         milvus_manager.init_collection()
 
         results = milvus_manager.query(
+            filter_expr='source_type == "document"',
             output_fields=["filename", "file_type"],
             limit=10000,
         )
@@ -440,7 +453,7 @@ async def upload_document(file: UploadFile = File(...), _: User = Depends(requir
         os.makedirs(UPLOAD_DIR, exist_ok=True)
         milvus_manager.init_collection()
 
-        delete_expr = f'filename == "{filename}"'
+        delete_expr = f'source_type == "document" and filename == "{filename}"'
         try:
             _remove_bm25_stats_for_filename(filename)
         except Exception:
@@ -495,7 +508,7 @@ async def delete_document(filename: str, _: User = Depends(require_admin)):
     try:
         milvus_manager.init_collection()
 
-        delete_expr = f'filename == "{filename}"'
+        delete_expr = f'source_type == "document" and filename == "{filename}"'
         _remove_bm25_stats_for_filename(filename)
         result = milvus_manager.delete(delete_expr)
         parent_chunk_store.delete_by_filename(filename)

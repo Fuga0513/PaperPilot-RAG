@@ -76,6 +76,9 @@ class RewriteStrategy(BaseModel):
 
 class RAGState(TypedDict):
     question: str
+    owner_id: Optional[int]
+    source_type: Optional[str]
+    paper_id: Optional[int]
     query: str
     context: str
     docs: List[dict]
@@ -103,7 +106,13 @@ def _format_docs(docs: List[dict]) -> str:
 def retrieve_initial(state: RAGState) -> RAGState:
     query = state["question"]
     emit_rag_step("🔍", "正在检索知识库...", f"查询: {query[:50]}")
-    retrieved = retrieve_documents(query, top_k=5)
+    retrieved = retrieve_documents(
+        query,
+        top_k=5,
+        owner_id=state.get("owner_id"),
+        paper_id=state.get("paper_id"),
+        source_type=state.get("source_type") or "document",
+    )
     results = retrieved.get("docs", [])
     retrieve_meta = retrieved.get("meta", {})
     context = _format_docs(results)
@@ -139,6 +148,8 @@ def retrieve_initial(state: RAGState) -> RAGState:
         "rerank_endpoint": retrieve_meta.get("rerank_endpoint"),
         "rerank_error": retrieve_meta.get("rerank_error"),
         "retrieval_mode": retrieve_meta.get("retrieval_mode"),
+        "retrieval_scope": retrieve_meta.get("retrieval_scope"),
+        "owner_filter_applied": retrieve_meta.get("owner_filter_applied"),
         "candidate_k": retrieve_meta.get("candidate_k"),
         "leaf_retrieve_level": retrieve_meta.get("leaf_retrieve_level"),
         "auto_merge_enabled": retrieve_meta.get("auto_merge_enabled"),
@@ -262,7 +273,13 @@ def retrieve_expanded(state: RAGState) -> RAGState:
 
     if strategy in ("hyde", "complex"):
         hypothetical_doc = state.get("hypothetical_doc") or generate_hypothetical_document(state["question"])
-        retrieved_hyde = retrieve_documents(hypothetical_doc, top_k=5)
+        retrieved_hyde = retrieve_documents(
+            hypothetical_doc,
+            top_k=5,
+            owner_id=state.get("owner_id"),
+            paper_id=state.get("paper_id"),
+            source_type=state.get("source_type") or "document",
+        )
         results.extend(retrieved_hyde.get("docs", []))
         hyde_meta = retrieved_hyde.get("meta", {})
         emit_rag_step(
@@ -291,7 +308,13 @@ def retrieve_expanded(state: RAGState) -> RAGState:
 
     if strategy in ("step_back", "complex"):
         expanded_query = state.get("expanded_query") or state["question"]
-        retrieved_stepback = retrieve_documents(expanded_query, top_k=5)
+        retrieved_stepback = retrieve_documents(
+            expanded_query,
+            top_k=5,
+            owner_id=state.get("owner_id"),
+            paper_id=state.get("paper_id"),
+            source_type=state.get("source_type") or "document",
+        )
         results.extend(retrieved_stepback.get("docs", []))
         step_meta = retrieved_stepback.get("meta", {})
         emit_rag_step(
@@ -350,6 +373,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         "rerank_endpoint": rerank_endpoint,
         "rerank_error": "; ".join(rerank_errors) if rerank_errors else None,
         "retrieval_mode": retrieval_mode,
+        "retrieval_scope": state.get("source_type") or "document",
+        "owner_filter_applied": bool(state.get("source_type") == "paper" and state.get("owner_id") is not None),
         "candidate_k": candidate_k,
         "leaf_retrieve_level": leaf_retrieve_level,
         "auto_merge_enabled": auto_merge_enabled,
@@ -386,9 +411,18 @@ def build_rag_graph():
 rag_graph = build_rag_graph()
 
 
-def run_rag_graph(question: str) -> dict:
+def run_rag_graph(
+    question: str,
+    *,
+    owner_id: int | None = None,
+    source_type: str = "document",
+    paper_id: int | None = None,
+) -> dict:
     return rag_graph.invoke({
         "question": question,
+        "owner_id": owner_id,
+        "source_type": source_type,
+        "paper_id": paper_id,
         "query": question,
         "context": "",
         "docs": [],

@@ -242,9 +242,36 @@ def step_back_expand(query: str) -> dict:
     }
 
 
-def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
+def _build_retrieval_filter(
+    source_type: str = "document",
+    owner_id: int | None = None,
+    paper_id: int | None = None,
+) -> str:
+    """Build the Milvus scalar filter for legacy KB or private paper search."""
+    clauses = [f"chunk_level == {LEAF_RETRIEVE_LEVEL}"]
+    if source_type == "paper":
+        if owner_id is None:
+            raise ValueError("owner_id is required for paper retrieval")
+        clauses.append('source_type == "paper"')
+        clauses.append(f"owner_id == {int(owner_id)}")
+        if paper_id is not None:
+            clauses.append(f"paper_id == {int(paper_id)}")
+    else:
+        clauses.append('source_type == "document"')
+    return " and ".join(clauses)
+
+
+def retrieve_documents(
+    query: str,
+    top_k: int = 5,
+    *,
+    owner_id: int | None = None,
+    paper_id: int | None = None,
+    source_type: str = "document",
+) -> Dict[str, Any]:
     candidate_k = max(top_k * 3, top_k)
-    filter_expr = f"chunk_level == {LEAF_RETRIEVE_LEVEL}"
+    filter_expr = _build_retrieval_filter(source_type=source_type, owner_id=owner_id, paper_id=paper_id)
+    owner_filter_applied = source_type == "paper" and owner_id is not None
     try:
         dense_embeddings = _embedding_service.get_embeddings([query])
         dense_embedding = dense_embeddings[0]
@@ -259,6 +286,8 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
         reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
         merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
         rerank_meta["retrieval_mode"] = "hybrid"
+        rerank_meta["retrieval_scope"] = source_type
+        rerank_meta["owner_filter_applied"] = owner_filter_applied
         rerank_meta["candidate_k"] = candidate_k
         rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
         rerank_meta.update(merge_meta)
@@ -275,6 +304,8 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
             reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
             merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
             rerank_meta["retrieval_mode"] = "dense_fallback"
+            rerank_meta["retrieval_scope"] = source_type
+            rerank_meta["owner_filter_applied"] = owner_filter_applied
             rerank_meta["candidate_k"] = candidate_k
             rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
             rerank_meta.update(merge_meta)
@@ -289,6 +320,8 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
                     "rerank_endpoint": _get_rerank_endpoint(),
                     "rerank_error": "retrieve_failed",
                     "retrieval_mode": "failed",
+                    "retrieval_scope": source_type,
+                    "owner_filter_applied": owner_filter_applied,
                     "candidate_k": candidate_k,
                     "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
                     "auto_merge_enabled": AUTO_MERGE_ENABLED,

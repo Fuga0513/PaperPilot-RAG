@@ -11,6 +11,42 @@ load_dotenv()
 # Milvus 单次 query 的 limit 上限（超出会报 invalid max query result window）
 QUERY_MAX_LIMIT = 16384
 T = TypeVar("T")
+RETRIEVAL_OUTPUT_FIELDS = [
+    "text",
+    "filename",
+    "file_type",
+    "page_number",
+    "source_type",
+    "owner_id",
+    "paper_id",
+    "paper_title",
+    "section_title",
+    "subsection_title",
+    "page_start",
+    "page_end",
+    "chunk_type",
+    "year",
+    "venue",
+    "chunk_id",
+    "parent_chunk_id",
+    "root_chunk_id",
+    "chunk_level",
+    "chunk_idx",
+]
+STRING_OUTPUT_FIELDS = {
+    "text",
+    "filename",
+    "file_type",
+    "source_type",
+    "paper_title",
+    "section_title",
+    "subsection_title",
+    "chunk_type",
+    "venue",
+    "chunk_id",
+    "parent_chunk_id",
+    "root_chunk_id",
+}
 
 
 class MilvusManager:
@@ -95,6 +131,21 @@ class MilvusManager:
                 schema.add_field("page_number", DataType.INT64)
                 schema.add_field("chunk_idx", DataType.INT64)
 
+                # Source and ownership metadata. Legacy /documents rows are
+                # source_type=document; PaperPilot paper rows are source_type=paper
+                # and must always be searched with owner_id filters.
+                schema.add_field("source_type", DataType.VARCHAR, max_length=30)
+                schema.add_field("owner_id", DataType.INT64)
+                schema.add_field("paper_id", DataType.INT64)
+                schema.add_field("paper_title", DataType.VARCHAR, max_length=500)
+                schema.add_field("section_title", DataType.VARCHAR, max_length=500)
+                schema.add_field("subsection_title", DataType.VARCHAR, max_length=500)
+                schema.add_field("page_start", DataType.INT64)
+                schema.add_field("page_end", DataType.INT64)
+                schema.add_field("chunk_type", DataType.VARCHAR, max_length=50)
+                schema.add_field("year", DataType.INT64)
+                schema.add_field("venue", DataType.VARCHAR, max_length=255)
+
                 # Auto-merging 所需层级字段
                 schema.add_field("chunk_id", DataType.VARCHAR, max_length=512)
                 schema.add_field("parent_chunk_id", DataType.VARCHAR, max_length=512)
@@ -131,6 +182,21 @@ class MilvusManager:
     def insert(self, data: list[dict]):
         """插入数据到 Milvus"""
         return self._run_with_reconnect(lambda client: client.insert(self.collection_name, data))
+
+    def get_field_names(self) -> set[str]:
+        """Return explicit field names for the current collection schema."""
+        def _fields(client: MilvusClient) -> set[str]:
+            if not client.has_collection(self.collection_name):
+                return set()
+            desc = client.describe_collection(self.collection_name)
+            fields = desc.get("fields") or []
+            return {field.get("name") for field in fields if field.get("name")}
+
+        return self._run_with_reconnect(_fields)
+
+    def has_fields(self, field_names: set[str]) -> bool:
+        """Check whether the collection exposes every required field."""
+        return field_names.issubset(self.get_field_names())
 
     def query(
         self,
@@ -182,17 +248,7 @@ class MilvusManager:
         filter_expr = f"chunk_id in [{quoted_ids}]"
         return self.query(
             filter_expr=filter_expr,
-            output_fields=[
-                "text",
-                "filename",
-                "file_type",
-                "page_number",
-                "chunk_id",
-                "parent_chunk_id",
-                "root_chunk_id",
-                "chunk_level",
-                "chunk_idx",
-            ],
+            output_fields=RETRIEVAL_OUTPUT_FIELDS,
             limit=len(ids),
         )
 
@@ -213,17 +269,7 @@ class MilvusManager:
         :param rrf_k: RRF 算法参数 k，默认60
         :return: 检索结果列表
         """
-        output_fields = [
-            "text",
-            "filename",
-            "file_type",
-            "page_number",
-            "chunk_id",
-            "parent_chunk_id",
-            "root_chunk_id",
-            "chunk_level",
-            "chunk_idx",
-        ]
+        output_fields = RETRIEVAL_OUTPUT_FIELDS
         
         # 密集向量搜索请求
         dense_search = AnnSearchRequest(
@@ -260,19 +306,10 @@ class MilvusManager:
         formatted_results = []
         for hits in results:
             for hit in hits:
-                formatted_results.append({
-                    "id": hit.get("id"),
-                    "text": hit.get("text", ""),
-                    "filename": hit.get("filename", ""),
-                    "file_type": hit.get("file_type", ""),
-                    "page_number": hit.get("page_number", 0),
-                    "chunk_id": hit.get("chunk_id", ""),
-                    "parent_chunk_id": hit.get("parent_chunk_id", ""),
-                    "root_chunk_id": hit.get("root_chunk_id", ""),
-                    "chunk_level": hit.get("chunk_level", 0),
-                    "chunk_idx": hit.get("chunk_idx", 0),
-                    "score": hit.get("distance", 0.0)
-                })
+                row = {field: hit.get(field, "" if field in STRING_OUTPUT_FIELDS else 0) for field in output_fields}
+                row["id"] = hit.get("id")
+                row["score"] = hit.get("distance", 0.0)
+                formatted_results.append(row)
         
         return formatted_results
 
@@ -287,17 +324,7 @@ class MilvusManager:
                 anns_field="dense_embedding",
                 search_params={"metric_type": "IP", "params": {"ef": 64}},
                 limit=top_k,
-                output_fields=[
-                    "text",
-                    "filename",
-                    "file_type",
-                    "page_number",
-                    "chunk_id",
-                    "parent_chunk_id",
-                    "root_chunk_id",
-                    "chunk_level",
-                    "chunk_idx",
-                ],
+                output_fields=RETRIEVAL_OUTPUT_FIELDS,
                 filter=filter_expr,
             )
         )
@@ -305,19 +332,11 @@ class MilvusManager:
         formatted_results = []
         for hits in results:
             for hit in hits:
-                formatted_results.append({
-                    "id": hit.get("id"),
-                    "text": hit.get("entity", {}).get("text", ""),
-                    "filename": hit.get("entity", {}).get("filename", ""),
-                    "file_type": hit.get("entity", {}).get("file_type", ""),
-                    "page_number": hit.get("entity", {}).get("page_number", 0),
-                    "chunk_id": hit.get("entity", {}).get("chunk_id", ""),
-                    "parent_chunk_id": hit.get("entity", {}).get("parent_chunk_id", ""),
-                    "root_chunk_id": hit.get("entity", {}).get("root_chunk_id", ""),
-                    "chunk_level": hit.get("entity", {}).get("chunk_level", 0),
-                    "chunk_idx": hit.get("entity", {}).get("chunk_idx", 0),
-                    "score": hit.get("distance", 0.0)
-                })
+                entity = hit.get("entity", {})
+                row = {field: entity.get(field, "" if field in STRING_OUTPUT_FIELDS else 0) for field in RETRIEVAL_OUTPUT_FIELDS}
+                row["id"] = hit.get("id")
+                row["score"] = hit.get("distance", 0.0)
+                formatted_results.append(row)
         
         return formatted_results
 

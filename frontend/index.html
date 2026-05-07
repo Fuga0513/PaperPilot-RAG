@@ -149,7 +149,8 @@
                                             <i :class="getPaperIcon(paper.filename)"></i>
                                             <span>{{ formatPaperTitle(paper) }}</span>
                                             <small>{{ paper.authors || 'Authors pending' }}</small>
-                                            <small>{{ paper.year || '-' }} · {{ paper.venue || 'Venue pending' }} · {{ paper.status }}</small>
+                                            <small>{{ paper.year || '-' }} · {{ paper.venue || 'Venue pending' }}</small>
+                                            <small :class="['paper-status', paperStatusClass(paper.status)]">{{ paper.status }}</small>
                                             <small>Uploaded {{ formatDate(paper.created_at) }}</small>
                                         </button>
                                     </div>
@@ -167,13 +168,27 @@
                                             <i :class="isParsingPaper ? 'fas fa-spinner fa-spin' : 'fas fa-wand-magic-sparkles'"></i>
                                             {{ isParsingPaper ? 'Parsing...' : 'Parse / Reparse' }}
                                         </button>
+                                        <button
+                                            class="secondary-action detail-action"
+                                            :disabled="loading.paperDetail || isIndexingPaper || !selectedPaperDetail || selectedPaperDetail.chunk_count === 0"
+                                            @click="indexSelectedPaper"
+                                        >
+                                            <i :class="isIndexingPaper ? 'fas fa-spinner fa-spin' : 'fas fa-database'"></i>
+                                            {{ isIndexingPaper ? 'Indexing...' : 'Index / Reindex' }}
+                                        </button>
                                         <dl>
                                             <dt>Authors</dt>
                                             <dd>{{ (selectedPaperDetail || selectedPaper).authors || 'Not available yet.' }}</dd>
                                             <dt>Abstract</dt>
                                             <dd>{{ (selectedPaperDetail || selectedPaper).abstract || 'Not available yet.' }}</dd>
                                             <dt>Status</dt>
-                                            <dd>{{ (selectedPaperDetail || selectedPaper).status }}</dd>
+                                            <dd>
+                                                <span :class="['paper-status', paperStatusClass((selectedPaperDetail || selectedPaper).status)]">
+                                                    {{ (selectedPaperDetail || selectedPaper).status }}
+                                                </span>
+                                                <span v-if="(selectedPaperDetail || selectedPaper).status === 'indexed'">Indexing completed.</span>
+                                                <span v-if="(selectedPaperDetail || selectedPaper).status === 'index_failed'">Indexing failed.</span>
+                                            </dd>
                                             <dt>Chunks</dt>
                                             <dd>{{ selectedPaperDetail?.chunk_count ?? 'Not parsed yet.' }}</dd>
                                             <dt>Filename</dt>
@@ -264,6 +279,7 @@
                                 <div>
                                     <h2>Chat with Papers</h2>
                                     <p>Current session: {{ currentSessionId }}</p>
+                                    <p v-if="papers.length > 0 && !hasIndexedPapers" class="chat-warning">Please index at least one paper before chatting with your Paper Library.</p>
                                 </div>
                                 <button class="secondary-action" @click="handleClearChat" :disabled="messages.length === 0 || isLoading">
                                     <i class="fas fa-eraser"></i> Clear

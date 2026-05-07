@@ -22,6 +22,7 @@ createApp({
             selectedPaper: null,
             selectedPaperDetail: null,
             isParsingPaper: false,
+            isIndexingPaper: false,
             documents: [],
             sessions: [],
             currentSessionId: 'session_' + Date.now(),
@@ -62,6 +63,10 @@ createApp({
         // Admins keep access to the existing global document endpoints.
         isAdmin() {
             return this.currentUser?.role === 'admin';
+        },
+
+        hasIndexedPapers() {
+            return this.papers.some(paper => paper.status === 'indexed');
         }
     },
 
@@ -416,12 +421,41 @@ createApp({
                 this.selectedPaperDetail = detail;
                 await this.loadPapers();
                 this.selectedPaper = this.papers.find(item => item.id === paperId) || detail;
+                if (detail.status === 'index_failed') {
+                    this.showError('Paper parsed successfully, but indexing failed because the Milvus collection uses the old schema. Rebuild the collection, then click Index / Reindex.');
+                }
             } catch (error) {
                 this.showError('Failed to parse paper: ' + error.message);
                 await this.loadPaperDetail(paperId);
             } finally {
                 this.isParsingPaper = false;
             }
+        },
+
+        async indexSelectedPaper() {
+            // POST /papers/{id}/index to write this user's parsed leaf chunks into Milvus.
+            const paperId = this.selectedPaper?.id;
+            if (!paperId || this.isIndexingPaper) return;
+            this.isIndexingPaper = true;
+            try {
+                const detail = await this.apiPost(`/papers/${encodeURIComponent(paperId)}/index`, {});
+                this.selectedPaperDetail = detail;
+                this.uploadProgress = detail.status === 'indexed' ? 'Indexing completed.' : '';
+                await this.loadPapers();
+                this.selectedPaper = this.papers.find(item => item.id === paperId) || detail;
+            } catch (error) {
+                this.showError('Failed to index paper: ' + error.message);
+                await this.loadPaperDetail(paperId);
+            } finally {
+                this.isIndexingPaper = false;
+            }
+        },
+
+        paperStatusClass(status) {
+            if (status === 'indexed') return 'status-indexed';
+            if (status === 'index_failed' || status === 'failed') return 'status-failed';
+            if (status === 'indexing' || status === 'parsing') return 'status-running';
+            return 'status-pending';
         },
 
         formatPaperTitle(paper) {
@@ -542,6 +576,7 @@ createApp({
                 this.uploadProgress = this.paperUploadResultMessage(paper.status);
                 if (paper.status === 'failed') this.showError(this.uploadProgress);
                 if (paper.status === 'metadata_failed') this.showError(this.uploadProgress);
+                if (paper.status === 'index_failed') this.showError(this.uploadProgress);
                 this.selectedFile = null;
                 if (this.$refs.fileInput) this.$refs.fileInput.value = '';
                 await this.loadPapers();
@@ -649,6 +684,11 @@ createApp({
             if (!this.requireAuth()) return;
             const text = this.userInput.trim();
             if (!text || this.isLoading || this.isComposing) return;
+            if (this.papers.length > 0 && !this.hasIndexedPapers) {
+                this.showError('No indexed papers are available yet. Please index a paper before chatting with your Paper Library.');
+                this.activeNav = 'library';
+                return;
+            }
             this.createPendingAssistantMessage(text);
             await this.startSSEChat({ message: text, session_id: this.currentSessionId });
         },
@@ -884,6 +924,8 @@ createApp({
 
         paperUploadResultMessage(status) {
             if (status === 'failed') return 'Paper uploaded, but parsing failed. Check the library status.';
+            if (status === 'index_failed') return 'Paper parsed, but indexing failed. Check Milvus schema and retry indexing.';
+            if (status === 'indexed') return 'Paper uploaded, parsed, metadata extracted, and indexed.';
             if (status === 'metadata_failed') return 'Paper parsed, but metadata extraction failed.';
             return 'Paper uploaded, parsed, and metadata extraction finished.';
         },

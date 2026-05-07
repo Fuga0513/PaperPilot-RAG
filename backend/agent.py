@@ -268,14 +268,20 @@ def summarize_old_messages(model, messages: list) -> str:
     return summary
 
 
-def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: str = "default_session"):
+def chat_with_agent(
+    user_text: str,
+    user_id: str = "default_user",
+    session_id: str = "default_session",
+    owner_id: int | None = None,
+    role: str | None = None,
+):
     """使用 Agent 处理用户消息并返回响应"""
     messages = storage.load(user_id, session_id)
 
     # 清理可能残留的 RAG 上下文，避免跨请求污染
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
-    set_tool_user_context(user_id=user_id)
+    set_tool_user_context(user_id=user_id, role=role, owner_id=owner_id)
     
     if len(messages) > 50:
         summary = summarize_old_messages(model, messages[:40])
@@ -318,7 +324,13 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
     }
 
 
-async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", session_id: str = "default_session"):
+async def chat_with_agent_stream(
+    user_text: str,
+    user_id: str = "default_user",
+    session_id: str = "default_session",
+    owner_id: int | None = None,
+    role: str | None = None,
+):
     """使用 Agent 处理用户消息并流式返回响应。
     
     架构：使用统一输出队列 + 后台任务，确保 RAG 检索步骤在工具执行期间实时推送，
@@ -329,7 +341,7 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
     # 清理可能残留的 RAG 上下文
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
-    set_tool_user_context(user_id=user_id)
+    set_tool_user_context(user_id=user_id, role=role, owner_id=owner_id)
 
     # 统一输出队列：所有事件（content / rag_step）都汇入这里
     output_queue = asyncio.Queue()
