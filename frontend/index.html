@@ -13,7 +13,7 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
 </head>
 <body>
-    <div id="app" class="app-wrapper">
+    <div id="app" class="app-wrapper app-shell">
         <!-- Auth Screen -->
         <main v-if="!isAuthenticated" class="auth-screen">
             <section class="auth-panel">
@@ -59,7 +59,7 @@
 
         <!-- PaperPilot Main Shell -->
         <template v-else>
-            <aside class="app-sidebar">
+            <aside class="app-sidebar sidebar">
                 <div class="sidebar-brand">
                     <div class="brand-mark">PP</div>
                     <div>
@@ -96,9 +96,17 @@
                     <h3>Current Paper</h3>
                     <div v-if="selectedPaper" class="selected-paper">
                         <strong>{{ formatPaperTitle(selectedPaper) }}</strong>
-                        <span>{{ selectedPaper.status }} · {{ formatDate(selectedPaper.created_at) }}</span>
+                        <span class="sidebar-paper-file">{{ selectedPaper.original_filename || selectedPaper.filename }}</span>
+                        <div class="sidebar-paper-meta">
+                            <span :class="['paper-status', paperStatusClass(selectedPaper.status)]">{{ formatPaperStatus(selectedPaper.status) }}</span>
+                            <span v-if="selectedPaperDetail?.chunk_count">{{ selectedPaperDetail.chunk_count }} chunks</span>
+                        </div>
+                        <span v-if="selectedPaper.year || selectedPaper.venue">{{ selectedPaper.year || '-' }} / {{ selectedPaper.venue || 'Venue pending' }}</span>
                     </div>
-                    <p v-else class="muted">No paper selected.</p>
+                    <div v-else class="selected-paper empty-paper-hint">
+                        <strong>No paper selected.</strong>
+                        <span>Upload or select a paper to ground your answers.</span>
+                    </div>
                 </section>
 
                 <section class="sidebar-section">
@@ -111,13 +119,14 @@
                 </section>
             </aside>
 
-            <main class="main-content">
+            <main class="main-content main-area">
                 <header class="top-header">
                     <div>
                         <h1>PaperPilot-RAG</h1>
                         <p>Research-Oriented Agentic RAG Assistant</p>
                     </div>
                     <div class="header-user">
+                        <div class="user-avatar">{{ currentUserInitials }}</div>
                         <div class="user-chip">
                             <span>{{ currentUser.username }}</span>
                             <small>{{ currentUser.role }}</small>
@@ -133,7 +142,7 @@
                     <button @click="clearError"><i class="fas fa-xmark"></i></button>
                 </div>
 
-                <div class="workspace">
+                <div class="workspace workspace-grid">
                     <section class="content-column">
                         <section v-if="activeNav === 'library'" class="panel">
                             <div class="panel-header">
@@ -842,7 +851,7 @@
                         </section>
 
                         <section v-show="activeNav === 'chat'" class="chat-panel panel">
-                            <div class="panel-header">
+                            <div class="panel-header chat-panel-header">
                                 <div>
                                     <h2>Chat with Papers</h2>
                                     <p>Current session: {{ currentSessionId }}</p>
@@ -850,15 +859,25 @@
                                     <p v-if="retrievalScope === 'global'" class="admin-note">Retrieval scope: Global Documents only.</p>
                                     <p v-if="retrievalScope === 'private_plus_global'" class="admin-note">Retrieval scope: private Paper Library plus administrator-uploaded Global Documents.</p>
                                 </div>
-                                <button class="secondary-action" @click="handleClearChat" :disabled="messages.length === 0 || isLoading">
-                                    <i class="fas fa-eraser"></i> Clear
-                                </button>
+                                <div class="chat-header-actions">
+                                    <span class="scope-pill">{{ retrievalScopeLabel }}</span>
+                                    <button class="secondary-action" @click="handleClearChat" :disabled="messages.length === 0 || isLoading">
+                                        <i class="fas fa-eraser"></i> Clear
+                                    </button>
+                                </div>
                             </div>
 
                             <div ref="chatContainer" class="chat-container">
-                                <div v-if="messages.length === 0" class="welcome-screen">
-                                    <h3>Ask your research question</h3>
-                                    <p>Upload papers to your library, then ask PaperPilot-RAG to retrieve, cite, and reason over the knowledge base.</p>
+                                <div v-if="messages.length === 0" class="welcome-screen chat-empty-state">
+                                    <div class="empty-illustration"><i class="fas fa-magnifying-glass-chart"></i></div>
+                                    <h3>Ask a research question</h3>
+                                    <p>Upload papers, select a retrieval scope, and ask PaperPilot-RAG to retrieve, cite, and reason over your research library.</p>
+                                    <div class="quick-prompt-list">
+                                        <button type="button" class="quick-prompt-chip" @click="fillQuickPrompt('Summarize the selected paper')">Summarize the selected paper</button>
+                                        <button type="button" class="quick-prompt-chip" @click="fillQuickPrompt('What are the main contributions?')">What are the main contributions?</button>
+                                        <button type="button" class="quick-prompt-chip" @click="fillQuickPrompt('Compare selected papers')">Compare selected papers</button>
+                                        <button type="button" class="quick-prompt-chip" @click="fillQuickPrompt('Generate related work')">Generate related work</button>
+                                    </div>
                                 </div>
 
                                 <article v-for="(msg, index) in messages" :key="index" :class="['message', msg.isUser ? 'user-message' : 'bot-message']">
@@ -877,7 +896,7 @@
                             </div>
 
                             <div class="input-area-wrapper">
-                                <div class="input-area">
+                                <div class="input-meta-row">
                                     <label class="retrieval-scope-control">
                                         <span>Retrieval</span>
                                         <select v-model="retrievalScope" :disabled="isLoading">
@@ -886,11 +905,15 @@
                                             <option value="global">Global only</option>
                                         </select>
                                     </label>
+                                    <span class="selected-paper-summary">{{ getSelectedPaperSummary() }}</span>
+                                    <span class="model-hint">Citation-grounded Agentic RAG</span>
+                                </div>
+                                <div class="input-area chat-input-bar">
                                     <textarea
                                         ref="textarea"
                                         v-model="userInput"
                                         rows="1"
-                                        placeholder="Ask about your papers... (Shift+Enter for newline)"
+                                        placeholder="Ask about your papers, methods, experiments, or reviewer comments..."
                                         :disabled="isLoading"
                                         @keydown="handleKeyDown"
                                         @compositionstart="handleCompositionStart"
@@ -911,10 +934,24 @@
                         </section>
                     </section>
 
-                    <aside class="inspector">
-                        <section class="panel mini-panel">
-                            <h2>Citations</h2>
-                            <div v-if="citations.length === 0" class="empty-state compact">No citations returned.</div>
+                    <aside class="inspector evidence-panel">
+                        <div class="evidence-panel-title">
+                            <div>
+                                <h2>Evidence & Trace</h2>
+                                <p>Grounding, retrieval route, tool activity, and warnings.</p>
+                            </div>
+                        </div>
+
+                        <section class="panel mini-panel evidence-card">
+                            <div class="evidence-card-header" @click="toggleEvidenceSection('citations')">
+                                <h2>Citations</h2>
+                                <span>{{ citations.length }}</span>
+                                <button class="icon-action" type="button">
+                                    <i :class="isEvidenceSectionCollapsed('citations') ? 'fas fa-chevron-down' : 'fas fa-chevron-up'"></i>
+                                </button>
+                            </div>
+                            <div v-show="!isEvidenceSectionCollapsed('citations')">
+                            <div v-if="citations.length === 0" class="empty-state compact">No citations yet. Ask a grounded question to see cited evidence.</div>
                             <div v-else class="citation-card-list">
                                 <article
                                     v-for="item in citations"
@@ -930,7 +967,7 @@
                                         <span>{{ item.section_title || 'Unknown section' }}</span>
                                         <span>{{ formatCitationPages(item) }}</span>
                                     </div>
-                                    <p>{{ item.preview_text || 'No preview text returned.' }}</p>
+                                    <p>{{ renderCitationPreview(item) }}</p>
                                     <details class="citation-scores">
                                         <summary>Scores</summary>
                                         <div>score: {{ item.score ?? '-' }}</div>
@@ -939,23 +976,27 @@
                                     </details>
                                 </article>
                             </div>
+                            </div>
                         </section>
 
-                        <section class="panel mini-panel">
-                            <div class="trace-heading">
+                        <section class="panel mini-panel evidence-card">
+                            <div class="trace-heading evidence-card-header" @click="toggleEvidenceSection('trace')">
                                 <h2>RAG Trace</h2>
-                                <button class="icon-action" @click="traceExpanded = !traceExpanded">
-                                    <i :class="traceExpanded ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
+                                <span>{{ ragTrace ? 'ready' : 'empty' }}</span>
+                                <button class="icon-action" type="button">
+                                    <i :class="isEvidenceSectionCollapsed('trace') ? 'fas fa-chevron-down' : 'fas fa-chevron-up'"></i>
                                 </button>
                             </div>
+                            <div v-show="!isEvidenceSectionCollapsed('trace')">
                             <div v-if="!ragTrace" class="empty-state compact">Trace will appear after a RAG answer.</div>
-                            <div v-else-if="traceExpanded" class="trace-list">
+                            <div v-else class="trace-list">
                                 <div><strong>Original:</strong> {{ ragTrace.original_query || ragTrace.query || '-' }}</div>
                                 <div><strong>Rewritten:</strong> {{ ragTrace.rewritten_query || ragTrace.expanded_query || '-' }}</div>
                                 <div><strong>Strategy:</strong> {{ ragTrace.rewrite_strategy || ragTrace.expansion_type || '-' }}</div>
                                 <div><strong>Stage:</strong> {{ ragTrace.retrieval_stage || '-' }}</div>
                                 <div><strong>Mode:</strong> {{ ragTrace.retrieval_mode || '-' }}</div>
                                 <div><strong>User filter:</strong> {{ yesNo(ragTrace.user_filter_applied ?? ragTrace.owner_filter_applied) }}</div>
+                                <div><strong>Retrieved:</strong> {{ traceResults('selected_context_chunks').length || traceResults('retrieved_chunks').length }}</div>
                                 <div><strong>Rerank:</strong> {{ yesNo(ragTrace.rerank_applied) }}</div>
                                 <div><strong>Auto-merge:</strong> {{ yesNo(ragTrace.auto_merge_applied) }}</div>
                                 <div v-if="ragTrace.fallback_reason"><strong>Fallback:</strong> {{ ragTrace.fallback_reason }}</div>
@@ -971,23 +1012,41 @@
                                     </div>
                                 </details>
                             </div>
+                            </div>
                         </section>
 
-                        <section class="panel mini-panel">
-                            <h2>Agent Tool Call</h2>
+                        <section class="panel mini-panel evidence-card">
+                            <div class="evidence-card-header" @click="toggleEvidenceSection('tools')">
+                                <h2>Agent Tool Call</h2>
+                                <span>{{ toolCalls.length }}</span>
+                                <button class="icon-action" type="button">
+                                    <i :class="isEvidenceSectionCollapsed('tools') ? 'fas fa-chevron-down' : 'fas fa-chevron-up'"></i>
+                                </button>
+                            </div>
+                            <div v-show="!isEvidenceSectionCollapsed('tools')">
                             <div v-if="toolCalls.length === 0" class="empty-state compact">No tool calls yet.</div>
                             <ul v-else class="tool-call-list">
                                 <li v-for="(call, index) in toolCalls" :key="index">
-                                    <strong>{{ call.name }}</strong>
-                                    <span>{{ call.detail }}</span>
+                                    <strong>{{ call.name || 'tool' }}</strong>
+                                    <span>{{ call.status || 'completed' }}</span>
+                                    <small>{{ call.detail || call.input_summary || 'retrieval step' }}</small>
                                 </li>
                             </ul>
+                            </div>
                         </section>
 
-                        <section class="panel mini-panel">
-                            <h2>Error / Warning</h2>
-                            <div v-if="!errorMessage" class="empty-state compact">No active warnings.</div>
-                            <p v-else class="warning-text">{{ errorMessage }}</p>
+                        <section class="panel mini-panel evidence-card">
+                            <div class="evidence-card-header" @click="toggleEvidenceSection('warnings')">
+                                <h2>Error / Warning</h2>
+                                <span>{{ hasActiveWarnings() ? 'active' : 'ok' }}</span>
+                                <button class="icon-action" type="button">
+                                    <i :class="isEvidenceSectionCollapsed('warnings') ? 'fas fa-chevron-down' : 'fas fa-chevron-up'"></i>
+                                </button>
+                            </div>
+                            <div v-show="!isEvidenceSectionCollapsed('warnings')">
+                            <div v-if="!hasActiveWarnings()" class="empty-state compact">No active warnings.</div>
+                            <p v-else class="warning-text warning-box">{{ errorMessage }}</p>
+                            </div>
                         </section>
                     </aside>
                 </div>

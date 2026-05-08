@@ -18,6 +18,14 @@ createApp({
             authNotice: '',
 
             activeNav: 'chat',
+            activeWorkspaceTab: 'chat',
+            collapsedEvidenceSections: {
+                citations: false,
+                trace: false,
+                tools: false,
+                warnings: false
+            },
+            quickPromptText: '',
             papers: [],
             selectedPaper: null,
             selectedPaperDetail: null,
@@ -132,6 +140,17 @@ createApp({
 
         selectedPaperCount() {
             return this.selectedPaperIds.length;
+        },
+
+        currentUserInitials() {
+            const username = this.currentUser?.username || 'U';
+            return username.slice(0, 2).toUpperCase();
+        },
+
+        retrievalScopeLabel() {
+            if (this.retrievalScope === 'global') return 'Global documents';
+            if (this.retrievalScope === 'private_plus_global') return 'Private + global';
+            return 'Private papers';
         }
     },
 
@@ -466,6 +485,7 @@ createApp({
         setActivePanel(panel) {
             // Switch main panels and load data on demand.
             this.activeNav = panel;
+            this.activeWorkspaceTab = panel;
             this.clearError();
             if (panel === 'library') this.loadPapers();
             if (panel === 'reviewer') this.loadPapers();
@@ -474,6 +494,33 @@ createApp({
             if (panel === 'documents') this.loadDocuments();
             if (panel === 'memory') this.loadMemoryPanel();
             if (panel === 'history') this.loadSessions();
+        },
+
+        setActiveWorkspace(tab) {
+            // Public workspace switcher used by nav/tool shortcuts.
+            this.setActivePanel(tab);
+        },
+
+        fillQuickPrompt(text) {
+            // Fill the chat input from a suggestion chip without sending it.
+            this.quickPromptText = text || '';
+            this.userInput = this.quickPromptText;
+            this.$nextTick(() => {
+                if (this.$refs.textarea) {
+                    this.$refs.textarea.focus();
+                    this.$refs.textarea.style.height = 'auto';
+                    this.$refs.textarea.style.height = this.$refs.textarea.scrollHeight + 'px';
+                }
+            });
+        },
+
+        toggleEvidenceSection(sectionName) {
+            // Collapse or expand one card in the Evidence & Trace panel.
+            this.collapsedEvidenceSections[sectionName] = !this.collapsedEvidenceSections[sectionName];
+        },
+
+        isEvidenceSectionCollapsed(sectionName) {
+            return !!this.collapsedEvidenceSections[sectionName];
         },
 
         async loadMemoryPanel() {
@@ -715,10 +762,23 @@ createApp({
             return 'status-pending';
         },
 
+        formatPaperStatus(status) {
+            // Normalize backend paper status text for compact badges.
+            const value = (status || 'uploaded').replaceAll('_', ' ');
+            return value.charAt(0).toUpperCase() + value.slice(1);
+        },
+
         formatPaperTitle(paper) {
             // Prefer extracted title; fall back to original or stored filename.
             if (!paper) return 'Untitled paper';
             return paper.title || paper.original_filename || paper.filename || 'Untitled paper';
+        },
+
+        getSelectedPaperSummary() {
+            // Return a one-line hint for the composer based on the selected papers.
+            if (this.selectedPaperIds.length > 1) return `${this.selectedPaperIds.length} papers selected`;
+            if (this.selectedPaper) return `Grounding: ${this.formatPaperTitle(this.selectedPaper)}`;
+            return 'No paper selected';
         },
 
         syncSelectedPaperAfterRefresh() {
@@ -1490,6 +1550,12 @@ createApp({
             return page ? `Page ${page}` : 'Page N/A';
         },
 
+        renderCitationPreview(citation) {
+            // Keep citation cards dense by clipping long evidence snippets.
+            const text = citation?.preview_text || citation?.text || 'No preview text returned.';
+            return text.length > 260 ? text.slice(0, 260).trim() + '...' : text;
+        },
+
         async openCitationPaper(item) {
             // Jump to Paper Detail for citations that include a current-user paper_id.
             if (!item?.paper_id) return;
@@ -1649,6 +1715,11 @@ createApp({
             if (value === true) return 'Yes';
             if (value === false) return 'No';
             return '-';
+        },
+
+        hasActiveWarnings() {
+            // The current UI treats the shared error banner as the active warning source.
+            return !!(this.errorMessage && this.errorMessage.trim());
         }
     },
 
