@@ -1,17 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
-import os
 
 import api as api_module
 import evaluation_api as evaluation_api_module
 import memory_api as memory_api_module
 import paper_api as paper_api_module
+from config import FRONTEND_DIR, SERVER
 from database import init_db
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "frontend"
 
 
 def create_app() -> FastAPI:
@@ -57,4 +53,4 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", 8000)))
+    uvicorn.run(app, host=SERVER.host, port=SERVER.port)

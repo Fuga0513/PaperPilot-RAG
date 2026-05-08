@@ -16,12 +16,13 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_db
 from models import Paper, PaperChunk, PaperMetadata, User
-from paper_indexer import MilvusSchemaError, index_paper_chunks, remove_paper_vectors
+from paper_indexer import MilvusSchemaError, remove_paper_vectors
 from paper_metadata_extractor import extract_and_store_metadata
 from paper_parser import ResearchPaperParser
 from paper_comparison import compare_user_papers
 from paper_rebuttal import analyze_review_comments, draft_rebuttal
 from paper_writing import run_research_writing_task
+from services.indexing_service import IndexingService
 from schemas import (
     ComparePapersRequest,
     ComparePapersResponse,
@@ -47,6 +48,7 @@ DATA_DIR = BASE_DIR.parent / "data"
 PAPER_UPLOAD_ROOT = DATA_DIR / "uploads"
 SUPPORTED_PAPER_SUFFIXES = {".pdf", ".docx", ".txt"}
 paper_parser = ResearchPaperParser()
+indexing_service = IndexingService()
 
 
 def _dt(value) -> str:
@@ -289,7 +291,7 @@ def _index_paper_after_parse(db: Session, paper: Paper) -> int:
         db.commit()
         db.refresh(paper)
 
-        indexed_count = index_paper_chunks(db, paper)
+        indexed_count = indexing_service.index_user_paper(db, paper).leaf_chunks
         paper.status = "indexed"
         paper.updated_at = datetime.utcnow()
         db.commit()

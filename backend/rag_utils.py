@@ -1,26 +1,23 @@
 from collections import defaultdict
 from typing import List, Tuple, Dict, Any
-import os
 import json
 import requests
-from dotenv import load_dotenv
 
+from config import LLM, RERANK, RETRIEVAL
 from milvus_client import MilvusManager
 from embedding import embedding_service as _embedding_service
 from parent_chunk_store import ParentChunkStore
 from langchain.chat_models import init_chat_model
 
-load_dotenv()
-
-ARK_API_KEY = os.getenv("ARK_API_KEY")
-MODEL = os.getenv("MODEL")
-BASE_URL = os.getenv("BASE_URL")
-RERANK_MODEL = os.getenv("RERANK_MODEL")
-RERANK_BINDING_HOST = os.getenv("RERANK_BINDING_HOST")
-RERANK_API_KEY = os.getenv("RERANK_API_KEY")
-AUTO_MERGE_ENABLED = os.getenv("AUTO_MERGE_ENABLED", "true").lower() != "false"
-AUTO_MERGE_THRESHOLD = int(os.getenv("AUTO_MERGE_THRESHOLD", "2"))
-LEAF_RETRIEVE_LEVEL = int(os.getenv("LEAF_RETRIEVE_LEVEL", "3"))
+ARK_API_KEY = LLM.api_key
+MODEL = LLM.model
+BASE_URL = LLM.base_url
+RERANK_MODEL = RERANK.model
+RERANK_BINDING_HOST = RERANK.binding_host
+RERANK_API_KEY = RERANK.api_key
+AUTO_MERGE_ENABLED = RETRIEVAL.auto_merge_enabled
+AUTO_MERGE_THRESHOLD = RETRIEVAL.auto_merge_threshold
+LEAF_RETRIEVE_LEVEL = RETRIEVAL.leaf_retrieve_level
 PAPER_METADATA_FIELDS = [
     "source_type",
     "owner_id",
@@ -43,10 +40,7 @@ _stepback_model = None
 
 
 def _get_rerank_endpoint() -> str:
-    if not RERANK_BINDING_HOST:
-        return ""
-    host = RERANK_BINDING_HOST.strip().rstrip("/")
-    return host if host.endswith("/v1/rerank") else f"{host}/v1/rerank"
+    return RERANK.endpoint
 
 
 def _merge_to_parent_level(docs: List[dict], threshold: int = 2) -> Tuple[List[dict], int]:
@@ -277,6 +271,47 @@ def _build_retrieval_filter(
     return " and ".join(clauses)
 
 
+def _build_retrieval_meta(
+    *,
+    source_type: str,
+    owner_filter_applied: bool,
+    candidate_k: int,
+    extra: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    meta = dict(extra or {})
+    meta["retrieval_scope"] = source_type
+    meta["owner_filter_applied"] = owner_filter_applied
+    meta["candidate_k"] = candidate_k
+    meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
+    return meta
+
+
+def _retrieve_hybrid(query: str, candidate_k: int, filter_expr: str) -> List[dict]:
+    dense_embedding = _embedding_service.get_embeddings([query])[0]
+    sparse_embedding = _embedding_service.get_sparse_embedding(query)
+    return _milvus_manager.hybrid_retrieve(
+        dense_embedding=dense_embedding,
+        sparse_embedding=sparse_embedding,
+        top_k=candidate_k,
+        filter_expr=filter_expr,
+    )
+
+
+def _retrieve_dense(query: str, candidate_k: int, filter_expr: str) -> List[dict]:
+    dense_embedding = _embedding_service.get_embeddings([query])[0]
+    return _milvus_manager.dense_retrieve(
+        dense_embedding=dense_embedding,
+        top_k=candidate_k,
+        filter_expr=filter_expr,
+    )
+
+
+RETRIEVAL_STRATEGIES = {
+    "hybrid": _retrieve_hybrid,
+    "dense_fallback": _retrieve_dense,
+}
+
+
 def retrieve_documents(
     query: str,
     top_k: int = 5,
@@ -288,66 +323,45 @@ def retrieve_documents(
     candidate_k = max(top_k * 3, top_k)
     filter_expr = _build_retrieval_filter(source_type=source_type, owner_id=owner_id, paper_id=paper_id)
     owner_filter_applied = source_type == "paper" and owner_id is not None
-    try:
-        dense_embeddings = _embedding_service.get_embeddings([query])
-        dense_embedding = dense_embeddings[0]
-        sparse_embedding = _embedding_service.get_sparse_embedding(query)
-
-        retrieved = _milvus_manager.hybrid_retrieve(
-            dense_embedding=dense_embedding,
-            sparse_embedding=sparse_embedding,
-            top_k=candidate_k,
-            filter_expr=filter_expr,
-        )
-        reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
-        merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
-        rerank_meta["retrieval_mode"] = "hybrid"
-        rerank_meta["retrieval_scope"] = source_type
-        rerank_meta["owner_filter_applied"] = owner_filter_applied
-        rerank_meta["candidate_k"] = candidate_k
-        rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
-        rerank_meta.update(merge_meta)
-        return {"docs": merged_docs, "meta": rerank_meta}
-    except Exception:
+    for strategy_name in ("hybrid", "dense_fallback"):
         try:
-            dense_embeddings = _embedding_service.get_embeddings([query])
-            dense_embedding = dense_embeddings[0]
-            retrieved = _milvus_manager.dense_retrieve(
-                dense_embedding=dense_embedding,
-                top_k=candidate_k,
-                filter_expr=filter_expr,
-            )
+            retrieved = RETRIEVAL_STRATEGIES[strategy_name](query, candidate_k, filter_expr)
             reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
             merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
-            rerank_meta["retrieval_mode"] = "dense_fallback"
-            rerank_meta["retrieval_scope"] = source_type
-            rerank_meta["owner_filter_applied"] = owner_filter_applied
-            rerank_meta["candidate_k"] = candidate_k
-            rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
-            rerank_meta.update(merge_meta)
+            rerank_meta["retrieval_mode"] = strategy_name
+            rerank_meta.update(
+                _build_retrieval_meta(
+                    source_type=source_type,
+                    owner_filter_applied=owner_filter_applied,
+                    candidate_k=candidate_k,
+                    extra=merge_meta,
+                )
+            )
             return {"docs": merged_docs, "meta": rerank_meta}
         except Exception:
-            return {
-                "docs": [],
-                "meta": {
-                    "rerank_enabled": bool(RERANK_MODEL and RERANK_API_KEY and RERANK_BINDING_HOST),
-                    "rerank_applied": False,
-                    "rerank_model": RERANK_MODEL,
-                    "rerank_endpoint": _get_rerank_endpoint(),
-                    "rerank_error": "retrieve_failed",
-                    "retrieval_mode": "failed",
-                    "retrieval_scope": source_type,
-                    "owner_filter_applied": owner_filter_applied,
-                    "candidate_k": candidate_k,
-                    "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
-                    "auto_merge_enabled": AUTO_MERGE_ENABLED,
-                    "auto_merge_applied": False,
-                    "auto_merge_threshold": AUTO_MERGE_THRESHOLD,
-                    "auto_merge_replaced_chunks": 0,
-                    "auto_merge_steps": 0,
-                    "candidate_count": 0,
-                },
-            }
+            continue
+
+    return {
+        "docs": [],
+        "meta": {
+            "rerank_enabled": bool(RERANK_MODEL and RERANK_API_KEY and RERANK_BINDING_HOST),
+            "rerank_applied": False,
+            "rerank_model": RERANK_MODEL,
+            "rerank_endpoint": _get_rerank_endpoint(),
+            "rerank_error": "retrieve_failed",
+            "retrieval_mode": "failed",
+            "retrieval_scope": source_type,
+            "owner_filter_applied": owner_filter_applied,
+            "candidate_k": candidate_k,
+            "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
+            "auto_merge_enabled": AUTO_MERGE_ENABLED,
+            "auto_merge_applied": False,
+            "auto_merge_threshold": AUTO_MERGE_THRESHOLD,
+            "auto_merge_replaced_chunks": 0,
+            "auto_merge_steps": 0,
+            "candidate_count": 0,
+        },
+    }
 
 
 def retrieve_documents_for_evaluation(

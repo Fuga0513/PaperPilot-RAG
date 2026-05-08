@@ -7,85 +7,38 @@ RAG trace, and SSE step events remain under our control.
 """
 
 from typing import Optional
-import os
-import requests
 
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 from citation_builder import build_citations, build_evidence_context
+from .context import (
+    acquire_research_search_slot,
+    emit_rag_step as _context_emit_rag_step,
+    get_last_rag_context as _context_get_last_rag_context,
+    get_tool_user_context as _context_get_tool_user_context,
+    reset_tool_call_guards as _context_reset_tool_call_guards,
+    set_last_rag_context,
+    set_rag_step_queue as _context_set_rag_step_queue,
+    set_tool_user_context as _context_set_tool_user_context,
+)
+from .schemas import (
+    ComparePapersInput,
+    DraftRebuttalInput,
+    PaperIdInput,
+    RelatedWorkInput,
+    ResearchSearchInput,
+    ResearchWritingInput,
+    ReviewerCommentsInput,
+)
 
 try:
     from langchain_core.tools import StructuredTool, tool
 except ImportError:
     from langchain_core.tools import StructuredTool, tool
 
-load_dotenv()
-
-AMAP_WEATHER_API = os.getenv("AMAP_WEATHER_API")
-AMAP_API_KEY = os.getenv("AMAP_API_KEY")
-
 _LAST_RAG_CONTEXT = None  
 _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
 _RAG_STEP_QUEUE = None
 _RAG_STEP_LOOP = None
 _CURRENT_TOOL_USER_CONTEXT = None
-
-
-class ResearchSearchInput(BaseModel):
-    """Input schema for PaperPilot document search."""
-
-    query: str = Field(..., description="Natural-language research question or retrieval query.")
-
-
-class PaperIdInput(BaseModel):
-    """Input schema for tools that target one uploaded paper."""
-
-    paper_id: str = Field(..., description="Stable paper id or filename. Future stages will map this to Paper.id.")
-    question: str = Field("", description="Optional focus question for the paper summary.")
-
-
-class ComparePapersInput(BaseModel):
-    """Input schema for multi-paper comparison."""
-
-    query: str = Field("Compare the selected papers", description="User comparison question or focus.")
-    paper_ids: list[str | int] = Field(default_factory=list, description="Optional current-user Paper.id values to compare.")
-    filenames: list[str] = Field(default_factory=list, description="Optional current-user filenames or titles to compare.")
-    compare_aspects: list[str] = Field(
-        default_factory=lambda: ["problem", "method", "contribution", "dataset", "metric", "limitation"],
-        description="Optional comparison aspects/columns.",
-    )
-
-
-class ReviewerCommentsInput(BaseModel):
-    """Input schema for reviewer-comment analysis."""
-
-    comments: str = Field(..., description="Reviewer comments or decision letter text.")
-    paper_id: str = Field("", description="Optional paper id or filename associated with the comments.")
-
-
-class DraftRebuttalInput(BaseModel):
-    """Input schema for rebuttal drafting."""
-
-    comments: str = Field(..., description="Reviewer comments to respond to.")
-    paper_id: str | int | None = Field(None, description="Optional current-user Paper.id for the rebuttal target.")
-
-
-class RelatedWorkInput(BaseModel):
-    """Input schema for related-work generation."""
-
-    topic: str = Field(..., description="Research topic or claim for the related-work section.")
-    constraints: str = Field("", description="Optional scope, venue, time range, or style constraints.")
-
-
-class ResearchWritingInput(BaseModel):
-    """Input schema for research writing assistance."""
-
-    task_type: str = Field(..., description="Writing task type, such as Generate Related Work or Rewrite Abstract.")
-    topic: str = Field("", description="Optional research topic or writing target.")
-    user_text: str = Field("", description="Optional draft text to polish, rewrite, or check.")
-    paper_ids: list[str | int] = Field(default_factory=list, description="Optional current-user Paper.id values.")
-    writing_style: str = Field("general academic", description="Target style, such as TMC, IWQoS, NSFC, or general academic.")
-    language: str = Field("en", description="Output language: zh or en.")
 
 
 # 用户上下文管理：记住“现在是谁在提问”
@@ -101,86 +54,43 @@ def set_tool_user_context(
     Stage 5 only reserves this boundary. Once Paper/PaperChunk are user-owned,
     this user_id must be propagated into Milvus and PostgreSQL filters.
     """
-    global _CURRENT_TOOL_USER_CONTEXT
-    scope = (retrieval_scope or "private").strip().lower()
-    if use_global_knowledge and scope == "private":
-        scope = "private_plus_global"
-    if scope not in {"private", "global", "private_plus_global"}:
-        scope = "private"
-    _CURRENT_TOOL_USER_CONTEXT = {
-        "user_id": user_id,
-        "role": role,
-        "owner_id": owner_id,
-        "use_global_knowledge": scope == "private_plus_global",
-        "retrieval_scope": scope,
-    }
+    _context_set_tool_user_context(user_id, role, owner_id, use_global_knowledge, retrieval_scope)
 
 
 def get_tool_user_context() -> Optional[dict]:
     """Return the current request context reserved for tool-side filtering."""
-    return _CURRENT_TOOL_USER_CONTEXT
+    return _context_get_tool_user_context()
 
 # RAG Trace 管理：记录“思考和搜索的痕迹”
 def _set_last_rag_context(context: dict) -> None:
-    global _LAST_RAG_CONTEXT
-    _LAST_RAG_CONTEXT = context
+    set_last_rag_context(context)
 
 
 def get_last_rag_context(clear: bool = True) -> Optional[dict]:
     """Return the latest RAG trace context captured by a retrieval tool."""
-    global _LAST_RAG_CONTEXT
-    context = _LAST_RAG_CONTEXT
-    if clear:
-        _LAST_RAG_CONTEXT = None
-    return context
+    return _context_get_last_rag_context(clear=clear)
 
 
 # 工具调用频率管理：限制“每轮思考只能调用一次检索工具”
 def reset_tool_call_guards() -> None:
     """Reset per-turn retrieval guard counters."""
-    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
-    _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
+    _context_reset_tool_call_guards()
 
 
 def _acquire_research_search_slot(tool_name: str) -> Optional[str]:
     """Allow at most one retrieval-style tool call in a single Agent turn."""
-    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
-    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= 1:
-        return (
-            f"TOOL_CALL_LIMIT_REACHED: {tool_name} or another retrieval tool has already "
-            "been called once in this turn. Use the existing retrieval result and provide "
-            "the final answer directly."
-        )
-    _KNOWLEDGE_TOOL_CALLS_THIS_TURN += 1
-    return None
+    return acquire_research_search_slot(tool_name)
 
 
 # RAG 步骤队列管理：设置用于推送实时 RAG 步骤事件的队列
 def set_rag_step_queue(queue) -> None:
     """Set the queue used by rag_pipeline to push live RAG step events."""
-    global _RAG_STEP_QUEUE, _RAG_STEP_LOOP
-    _RAG_STEP_QUEUE = queue
-    if queue:
-        import asyncio
-
-        try:
-            _RAG_STEP_LOOP = asyncio.get_running_loop()
-        except RuntimeError:
-            _RAG_STEP_LOOP = asyncio.get_event_loop()
-    else:
-        _RAG_STEP_LOOP = None
+    _context_set_rag_step_queue(queue)
 
 
 def emit_rag_step(icon: str, label: str, detail: str = "") -> None:
     """Push one RAG progress step from sync tools into the async SSE stream."""
-    if _RAG_STEP_QUEUE is None or _RAG_STEP_LOOP is None:
-        return
-    step = {"icon": icon, "label": label, "detail": detail}
-    try:
-        if not _RAG_STEP_LOOP.is_closed():
-            _RAG_STEP_LOOP.call_soon_threadsafe(_RAG_STEP_QUEUE.put_nowait, step)
-    except Exception:
-        pass
+    _context_emit_rag_step(icon, label, detail)
 
 
 # 格式化从知识库查回来的文档片段 -→ [1] 论文A.pdf (Page 5, Chunk 23)：这里是论文里的一段内容...
@@ -309,65 +219,6 @@ def _run_combined_rag_search(query: str) -> str:
         return "当前文档证据不足：No relevant accessible evidence chunks were retrieved. Do not invent citations or evidence."
 
     return _format_retrieved_chunks(docs, citations)
-
-
-def get_current_weather(location: str, extensions: Optional[str] = "base") -> str:
-    """Get weather information from AMap.
-
-    This legacy SuperMew tool is kept for compatibility.
-    """
-    if not location:
-        return "location cannot be empty."
-    if extensions not in ("base", "all"):
-        return "extensions must be 'base' or 'all'."
-    if not AMAP_WEATHER_API or not AMAP_API_KEY:
-        return "Weather service is not configured; missing AMAP_WEATHER_API or AMAP_API_KEY."
-
-    params = {
-        "key": AMAP_API_KEY,
-        "city": location,
-        "extensions": extensions,
-        "output": "json",
-    }
-    try:
-        resp = requests.get(AMAP_WEATHER_API, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("status") != "1":
-            return f"Weather query failed: {data.get('info', 'unknown error')}"
-
-        if extensions == "base":
-            lives = data.get("lives", [])
-            if not lives:
-                return f"No weather data found for {location}."
-            w = lives[0]
-            return (
-                f"{w.get('city', location)} realtime weather\n"
-                f"Weather: {w.get('weather', 'unknown')}\n"
-                f"Temperature: {w.get('temperature', 'unknown')} C\n"
-                f"Humidity: {w.get('humidity', 'unknown')}%\n"
-                f"Wind: {w.get('winddirection', 'unknown')} {w.get('windpower', 'unknown')}\n"
-                f"Updated: {w.get('reporttime', 'unknown')}"
-            )
-
-        forecasts = data.get("forecasts", [])
-        if not forecasts:
-            return f"No weather forecast found for {location}."
-        f0 = forecasts[0]
-        casts = f0.get("casts") or []
-        today = casts[0] if casts else {}
-        return (
-            f"{f0.get('city', location)} weather forecast\n"
-            f"Updated: {f0.get('reporttime', 'unknown')}\n"
-            f"Today: {today.get('dayweather', 'unknown')} / {today.get('nightweather', 'unknown')}\n"
-            f"Temperature: {today.get('nighttemp', 'unknown')}~{today.get('daytemp', 'unknown')} C"
-        )
-    except requests.exceptions.Timeout:
-        return "Weather service request timed out."
-    except requests.exceptions.RequestException as e:
-        return f"Weather service request failed: {e}"
-    except Exception as e:
-        return f"Weather data parsing failed: {e}"
 
 
 @tool("search_knowledge_base")

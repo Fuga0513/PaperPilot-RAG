@@ -1,5 +1,3 @@
-from dotenv import load_dotenv
-import os
 import json
 import asyncio
 from langchain.chat_models import init_chat_model
@@ -19,12 +17,11 @@ from cache import cache
 from database import SessionLocal
 from memory_manager import MemoryManager
 from models import User, ChatSession, ChatMessage
+from config import LLM
 
-load_dotenv()
-
-API_KEY = os.getenv("ARK_API_KEY")
-MODEL = os.getenv("MODEL")
-BASE_URL = os.getenv("BASE_URL")
+API_KEY = LLM.api_key
+MODEL = LLM.model
+BASE_URL = LLM.base_url
 
 class ConversationStorage:
     """对话存储（PostgreSQL + Redis）。"""
