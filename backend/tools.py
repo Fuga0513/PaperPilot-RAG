@@ -89,14 +89,24 @@ class ResearchWritingInput(BaseModel):
 
 
 # 用户上下文管理：记住“现在是谁在提问”
-def set_tool_user_context(user_id: str | None, role: str | None = None, owner_id: int | None = None) -> None:
+def set_tool_user_context(
+    user_id: str | None,
+    role: str | None = None,
+    owner_id: int | None = None,
+    use_global_knowledge: bool = False,
+) -> None:
     """Set the current request user context for future retrieval filters.
 
     Stage 5 only reserves this boundary. Once Paper/PaperChunk are user-owned,
     this user_id must be propagated into Milvus and PostgreSQL filters.
     """
     global _CURRENT_TOOL_USER_CONTEXT
-    _CURRENT_TOOL_USER_CONTEXT = {"user_id": user_id, "role": role, "owner_id": owner_id}
+    _CURRENT_TOOL_USER_CONTEXT = {
+        "user_id": user_id,
+        "role": role,
+        "owner_id": owner_id,
+        "use_global_knowledge": bool(use_global_knowledge),
+    }
 
 
 def get_tool_user_context() -> Optional[dict]:
@@ -224,6 +234,70 @@ def _run_rag_search(query: str, tool_name: str, source_type: str = "document") -
     return _format_retrieved_chunks(docs, citations)
 
 
+def _run_combined_rag_search(query: str) -> str:
+    """Search private papers plus administrator-maintained global documents."""
+    limit_message = _acquire_research_search_slot("search_research_documents")
+    if limit_message:
+        return limit_message
+
+    user_context = get_tool_user_context() or {}
+    owner_id = user_context.get("owner_id")
+    if owner_id is None:
+        return "No authenticated user context is available for private paper retrieval."
+
+    from rag_pipeline import run_rag_graph
+
+    paper_result = run_rag_graph(query, owner_id=owner_id, source_type="paper")
+    global_result = run_rag_graph(query, source_type="document")
+    paper_docs = paper_result.get("docs", []) if isinstance(paper_result, dict) else []
+    global_docs = global_result.get("docs", []) if isinstance(global_result, dict) else []
+
+    docs = []
+    seen = set()
+    for doc in [*paper_docs, *global_docs]:
+        key = doc.get("chunk_id") or (doc.get("source_type"), doc.get("filename"), doc.get("page_number"), doc.get("text"))
+        if key in seen:
+            continue
+        seen.add(key)
+        docs.append(doc)
+    docs = docs[:8]
+
+    citations = build_citations(docs, owner_id=owner_id)
+    cited_ids = {item.get("citation_id") for item in citations}
+    docs = [doc for doc in docs if doc.get("citation_id") in cited_ids]
+    paper_trace = paper_result.get("rag_trace", {}) if isinstance(paper_result, dict) else {}
+    global_trace = global_result.get("rag_trace", {}) if isinstance(global_result, dict) else {}
+    rag_trace = {
+        "tool_used": True,
+        "tool_name": "search_research_documents",
+        "original_query": query,
+        "query": query,
+        "retrieval_stage": "combined",
+        "retrieval_mode": "private_papers_plus_global_documents",
+        "retrieval_scope": "paper+document",
+        "owner_filter_applied": True,
+        "user_filter_applied": True,
+        "global_knowledge_enabled": True,
+        "private_paper_chunk_count": len(paper_docs),
+        "global_document_chunk_count": len(global_docs),
+        "citations": citations,
+        "tool_calls": [{"name": "search_research_documents", "detail": "private papers + global documents"}],
+        "retrieved_chunks": docs,
+        "selected_context_chunks": docs,
+        "first_retrieval_results": paper_docs,
+        "second_retrieval_results": global_docs,
+        "paper_rag_trace": paper_trace,
+        "global_rag_trace": global_trace,
+        "fallback_reason": None if citations else "no_combined_retrieval_results",
+    }
+    _set_last_rag_context({"rag_trace": rag_trace})
+
+    if not citations:
+        return "当前文档证据不足：No relevant accessible evidence chunks were retrieved. Do not invent citations or evidence."
+
+    return _format_retrieved_chunks(docs, citations)
+
+
 def get_current_weather(location: str, extensions: Optional[str] = "base") -> str:
     """Get weather information from AMap.
 
@@ -296,6 +370,9 @@ def search_knowledge_base(query: str) -> str:
 
 def _search_research_documents(query: str) -> str:
     """Search research papers, project docs, reviews, and notes."""
+    user_context = get_tool_user_context() or {}
+    if user_context.get("use_global_knowledge"):
+        return _run_combined_rag_search(query=query)
     return _run_rag_search(query=query, tool_name="search_research_documents", source_type="paper")
 
 

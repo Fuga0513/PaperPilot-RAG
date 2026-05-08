@@ -385,15 +385,24 @@
                             <div v-if="loading.sessions" class="empty-state">Loading sessions...</div>
                             <div v-else-if="sessions.length === 0" class="empty-state">No sessions yet.</div>
                             <div v-else class="session-list">
-                                <button
+                                <article
                                     v-for="session in sessions"
                                     :key="session.session_id"
                                     :class="['session-item', {active: session.session_id === currentSessionId}]"
-                                    @click="selectSession(session.session_id)"
                                 >
-                                    <span>{{ session.session_id }}</span>
+                                    <button class="session-main-action" @click="selectSession(session.session_id)">
+                                        <span>{{ session.session_id }}</span>
                                     <small>{{ session.message_count }} messages · {{ formatDate(session.updated_at) }}</small>
-                                </button>
+                                    </button>
+                                    <button
+                                        class="danger-action compact-action"
+                                        :disabled="deletingSessionIds.includes(session.session_id)"
+                                        @click="deleteSession(session)"
+                                    >
+                                        <i :class="deletingSessionIds.includes(session.session_id) ? 'fas fa-spinner fa-spin' : 'fas fa-trash'"></i>
+                                        {{ deletingSessionIds.includes(session.session_id) ? 'Deleting' : 'Delete' }}
+                                    </button>
+                                </article>
                             </div>
                         </section>
 
@@ -838,6 +847,7 @@
                                     <h2>Chat with Papers</h2>
                                     <p>Current session: {{ currentSessionId }}</p>
                                     <p v-if="papers.length > 0 && !hasIndexedPapers" class="chat-warning">Please index at least one paper before chatting with your Paper Library.</p>
+                                    <p v-if="useGlobalKnowledge" class="admin-note">Public knowledge base mode is on: answers may use administrator-uploaded Global Documents as read-only evidence.</p>
                                 </div>
                                 <button class="secondary-action" @click="handleClearChat" :disabled="messages.length === 0 || isLoading">
                                     <i class="fas fa-eraser"></i> Clear
@@ -867,6 +877,10 @@
 
                             <div class="input-area-wrapper">
                                 <div class="input-area">
+                                    <label class="global-knowledge-toggle">
+                                        <input type="checkbox" v-model="useGlobalKnowledge" :disabled="isLoading">
+                                        <span>Include Global Knowledge</span>
+                                    </label>
                                     <textarea
                                         ref="textarea"
                                         v-model="userInput"

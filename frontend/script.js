@@ -81,11 +81,13 @@ createApp({
             deletingPaperIds: [],
             documents: [],
             sessions: [],
+            deletingSessionIds: [],
             currentSessionId: 'session_' + Date.now(),
             sessionId: '',
 
             messages: [],
             userInput: '',
+            useGlobalKnowledge: false,
             isLoading: false,
             abortController: null,
             streamingMessageIndex: null,
@@ -342,6 +344,7 @@ createApp({
             this.currentUser = null;
             this.messages = [];
             this.sessions = [];
+            this.deletingSessionIds = [];
             this.papers = [];
             this.documents = [];
             this.deleteJobs = {};
@@ -437,6 +440,24 @@ createApp({
             this.citations = [];
             this.ragTrace = null;
             this.toolCalls = [];
+        },
+
+        async deleteSession(session) {
+            // DELETE /sessions/{id}; users can delete only their own chat history.
+            const sessionId = session?.session_id || session;
+            if (!sessionId || this.deletingSessionIds.includes(sessionId)) return;
+            if (!confirm(`Delete session "${sessionId}"?`)) return;
+            this.deletingSessionIds = [...this.deletingSessionIds, sessionId];
+            this.clearError();
+            try {
+                await this.apiDelete(`/sessions/${encodeURIComponent(sessionId)}`);
+                this.sessions = this.sessions.filter(item => item.session_id !== sessionId);
+                if (this.currentSessionId === sessionId) this.handleNewChat();
+            } catch (error) {
+                this.showError('Failed to delete session: ' + error.message);
+            } finally {
+                this.deletingSessionIds = this.deletingSessionIds.filter(item => item !== sessionId);
+            }
         },
 
         // =========================
@@ -1301,13 +1322,17 @@ createApp({
             if (!this.requireAuth()) return;
             const text = this.userInput.trim();
             if (!text || this.isLoading || this.isComposing) return;
-            if (this.papers.length > 0 && !this.hasIndexedPapers) {
+            if (!this.useGlobalKnowledge && this.papers.length > 0 && !this.hasIndexedPapers) {
                 this.showError('No indexed papers are available yet. Please index a paper before chatting with your Paper Library.');
                 this.activeNav = 'library';
                 return;
             }
             this.createPendingAssistantMessage(text);
-            await this.startSSEChat({ message: text, session_id: this.currentSessionId });
+            await this.startSSEChat({
+                message: text,
+                session_id: this.currentSessionId,
+                use_global_knowledge: this.useGlobalKnowledge
+            });
         },
 
         createPendingAssistantMessage(text) {

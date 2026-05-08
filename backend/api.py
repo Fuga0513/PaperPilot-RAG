@@ -147,6 +147,7 @@ async def chat_endpoint(request: ChatRequest, current_user: User = Depends(get_c
             session_id,
             owner_id=current_user.id,
             role=current_user.role,
+            use_global_knowledge=request.use_global_knowledge,
         )
         if isinstance(resp, dict):
             return ChatResponse(**resp)
@@ -183,6 +184,7 @@ async def chat_stream_endpoint(request: ChatRequest, current_user: User = Depend
                 session_id,
                 owner_id=current_user.id,
                 role=current_user.role,
+                use_global_knowledge=request.use_global_knowledge,
             ):
                 yield chunk
         except Exception as e:

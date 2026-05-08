@@ -304,6 +304,7 @@ def chat_with_agent(
     session_id: str = "default_session",
     owner_id: int | None = None,
     role: str | None = None,
+    use_global_knowledge: bool = False,
 ):
     """使用 Agent 处理用户消息并返回响应"""
     messages = storage.load(user_id, session_id)
@@ -311,7 +312,12 @@ def chat_with_agent(
     # 清理可能残留的 RAG 上下文，避免跨请求污染
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
-    set_tool_user_context(user_id=user_id, role=role, owner_id=owner_id)
+    set_tool_user_context(
+        user_id=user_id,
+        role=role,
+        owner_id=owner_id,
+        use_global_knowledge=use_global_knowledge,
+    )
     
     if len(messages) > 50:
         summary = summarize_old_messages(model, messages[:40])
@@ -324,6 +330,13 @@ def chat_with_agent(
     runtime_messages = list(messages)
     if memory_message:
         runtime_messages.append(memory_message)
+    if use_global_knowledge:
+        runtime_messages.append(SystemMessage(content=(
+            "Public knowledge base mode is enabled for this turn. "
+            "For research/document questions, search_research_documents may retrieve both "
+            "the user's private papers and administrator-uploaded global documents. "
+            "Global documents are read-only shared evidence; private papers remain scoped to the current user."
+        )))
     runtime_messages.append(HumanMessage(content=user_text))
     result = agent.invoke(
         {"messages": runtime_messages},
@@ -370,6 +383,7 @@ async def chat_with_agent_stream(
     session_id: str = "default_session",
     owner_id: int | None = None,
     role: str | None = None,
+    use_global_knowledge: bool = False,
 ):
     """使用 Agent 处理用户消息并流式返回响应。
     
@@ -381,7 +395,12 @@ async def chat_with_agent_stream(
     # 清理可能残留的 RAG 上下文
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
-    set_tool_user_context(user_id=user_id, role=role, owner_id=owner_id)
+    set_tool_user_context(
+        user_id=user_id,
+        role=role,
+        owner_id=owner_id,
+        use_global_knowledge=use_global_knowledge,
+    )
 
     # 统一输出队列：所有事件（content / rag_step）都汇入这里
     output_queue = asyncio.Queue()
@@ -403,6 +422,13 @@ async def chat_with_agent_stream(
     runtime_messages = list(messages)
     if memory_message:
         runtime_messages.append(memory_message)
+    if use_global_knowledge:
+        runtime_messages.append(SystemMessage(content=(
+            "Public knowledge base mode is enabled for this turn. "
+            "For research/document questions, search_research_documents may retrieve both "
+            "the user's private papers and administrator-uploaded global documents. "
+            "Global documents are read-only shared evidence; private papers remain scoped to the current user."
+        )))
     runtime_messages.append(HumanMessage(content=user_text))
 
     full_response = ""

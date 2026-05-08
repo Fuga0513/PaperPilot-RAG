@@ -29,6 +29,7 @@ class CurrentUserResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default_session"
+    use_global_knowledge: bool = False
 
 
 class RetrievedChunk(BaseModel):
