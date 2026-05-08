@@ -81,6 +81,9 @@
                     <button @click="handleHistory" :class="['nav-btn', {active: activeNav === 'history'}]">
                         <i class="fas fa-clock-rotate-left"></i> Session History
                     </button>
+                    <button @click="setActivePanel('memory')" :class="['nav-btn', {active: activeNav === 'memory'}]">
+                        <i class="fas fa-diagram-project"></i> Memory / Project
+                    </button>
                 </nav>
 
                 <section class="sidebar-section">
@@ -304,6 +307,123 @@
                                     <span>{{ session.session_id }}</span>
                                     <small>{{ session.message_count }} messages · {{ formatDate(session.updated_at) }}</small>
                                 </button>
+                            </div>
+                        </section>
+
+                        <section v-if="activeNav === 'memory'" class="panel memory-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <h2>Memory / Project</h2>
+                                    <p>Manage user-scoped project context and explicit memories. Memory is never used as citation evidence.</p>
+                                </div>
+                                <button class="secondary-action" :disabled="isLoadingMemory" @click="loadMemoryItems">
+                                    <i :class="isLoadingMemory ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
+                                </button>
+                            </div>
+
+                            <div class="memory-layout">
+                                <section class="memory-input-box">
+                                    <h3>Create Research Project</h3>
+                                    <input v-model="projectForm.name" type="text" :disabled="isCreatingProject" placeholder="Project name">
+                                    <textarea v-model="projectForm.description" rows="3" :disabled="isCreatingProject" placeholder="Project goal, scope, or current direction"></textarea>
+                                    <button class="primary-action" :disabled="isCreatingProject || !projectForm.name.trim()" @click="createProject">
+                                        <i :class="isCreatingProject ? 'fas fa-spinner fa-spin' : 'fas fa-plus'"></i>
+                                        {{ isCreatingProject ? 'Creating...' : 'Create Project' }}
+                                    </button>
+
+                                    <h3>Save as Memory</h3>
+                                    <div class="memory-grid">
+                                        <label>
+                                            <span>Scope</span>
+                                            <select v-model="memoryForm.scope" :disabled="isSavingMemory">
+                                                <option value="global">global</option>
+                                                <option value="project">project</option>
+                                                <option value="paper">paper</option>
+                                                <option value="session">session</option>
+                                            </select>
+                                        </label>
+                                        <label>
+                                            <span>Type</span>
+                                            <select v-model="memoryForm.memory_type" :disabled="isSavingMemory">
+                                                <option value="preference">preference</option>
+                                                <option value="fact">fact</option>
+                                                <option value="task">task</option>
+                                                <option value="style">style</option>
+                                                <option value="reviewer_issue">reviewer_issue</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <label>
+                                        <span>Project</span>
+                                        <select v-model="memoryForm.project_id" :disabled="isSavingMemory">
+                                            <option value="">No project</option>
+                                            <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        <span>Paper</span>
+                                        <select v-model="memoryForm.paper_id" :disabled="isSavingMemory">
+                                            <option value="">No paper</option>
+                                            <option v-for="paper in papers" :key="paper.id" :value="paper.id">{{ formatPaperTitle(paper) }}</option>
+                                        </select>
+                                    </label>
+                                    <textarea v-model="memoryForm.content" rows="7" :disabled="isSavingMemory" placeholder="Explicit memory content. Avoid sensitive personal information."></textarea>
+                                    <div class="memory-actions">
+                                        <button class="secondary-action" :disabled="isSavingMemory" @click="fillMemoryFromLatestAssistant">
+                                            Latest Answer
+                                        </button>
+                                        <button class="secondary-action" :disabled="isSavingMemory" @click="fillMemoryFromUserInput">
+                                            Current Input
+                                        </button>
+                                        <button class="primary-action" :disabled="isSavingMemory || !memoryForm.content.trim()" @click="saveMemoryItem">
+                                            <i :class="isSavingMemory ? 'fas fa-spinner fa-spin' : 'fas fa-bookmark'"></i>
+                                            {{ isSavingMemory ? 'Saving...' : 'Save Memory' }}
+                                        </button>
+                                    </div>
+                                </section>
+
+                                <section class="memory-output-box">
+                                    <div class="memory-toolbar">
+                                        <select v-model="selectedProjectId" :disabled="isLoadingMemory" @change="loadMemoryItems">
+                                            <option value="">All projects</option>
+                                            <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+                                        </select>
+                                        <input v-model="memoryQuery" type="text" :disabled="isLoadingMemory" placeholder="Search memory">
+                                        <button class="secondary-action" :disabled="isLoadingMemory" @click="loadMemoryItems">Search</button>
+                                    </div>
+
+                                    <h3>Projects</h3>
+                                    <div v-if="isLoadingProjects" class="empty-state compact">Loading projects...</div>
+                                    <div v-else-if="projects.length === 0" class="empty-state compact">No projects yet.</div>
+                                    <div v-else class="project-list">
+                                        <article v-for="project in projects" :key="project.id" class="project-card">
+                                            <strong>{{ project.name }}</strong>
+                                            <p>{{ project.description || 'No description.' }}</p>
+                                            <small>{{ formatDate(project.updated_at) }}</small>
+                                        </article>
+                                    </div>
+
+                                    <h3>Memories</h3>
+                                    <div v-if="isLoadingMemory" class="empty-state compact">Loading memories...</div>
+                                    <div v-else-if="memoryItems.length === 0" class="empty-state compact">No memories saved.</div>
+                                    <div v-else class="memory-list">
+                                        <article v-for="item in memoryItems" :key="item.id" class="memory-card">
+                                            <div class="memory-card-header">
+                                                <span>{{ item.scope }}</span>
+                                                <span>{{ item.memory_type }}</span>
+                                                <button class="icon-action" @click="deleteMemoryItem(item.id)">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </div>
+                                            <p>{{ item.content }}</p>
+                                            <small>
+                                                session {{ item.source_session_id || '-' }}
+                                                <span v-if="item.project_id"> · project {{ item.project_id }}</span>
+                                                <span v-if="item.paper_id"> · paper {{ item.paper_id }}</span>
+                                            </small>
+                                        </article>
+                                    </div>
+                                </section>
                             </div>
                         </section>
 

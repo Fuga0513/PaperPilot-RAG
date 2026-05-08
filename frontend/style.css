@@ -741,6 +741,127 @@ textarea:disabled {
     background: #fff7ed;
 }
 
+/* Memory / Project */
+.memory-panel {
+    overflow-y: auto;
+}
+
+.memory-layout {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(280px, 0.9fr) minmax(340px, 1.1fr);
+}
+
+.memory-input-box,
+.memory-output-box {
+    padding: 16px;
+    min-width: 0;
+}
+
+.memory-input-box {
+    border-right: 1px solid var(--line);
+}
+
+.memory-input-box h3,
+.memory-output-box h3 {
+    margin: 10px 0;
+}
+
+.memory-input-box input,
+.memory-input-box select,
+.memory-input-box textarea,
+.memory-toolbar input,
+.memory-toolbar select {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px;
+    font: inherit;
+}
+
+.memory-input-box textarea {
+    resize: vertical;
+    min-height: 90px;
+    margin: 10px 0;
+}
+
+.memory-input-box label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 10px 0;
+    font-weight: 800;
+}
+
+.memory-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.memory-actions,
+.memory-toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.memory-toolbar {
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.memory-toolbar select,
+.memory-toolbar input {
+    flex: 1 1 180px;
+}
+
+.project-list,
+.memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.project-card,
+.memory-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-soft);
+    padding: 12px;
+}
+
+.project-card p,
+.memory-card p {
+    margin: 6px 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.project-card small,
+.memory-card small {
+    color: var(--muted);
+}
+
+.memory-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.memory-card-header span {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: white;
+    color: var(--muted);
+    font-weight: 800;
+}
+
+.memory-card-header .icon-action {
+    margin-left: auto;
+}
+
 .paper-detail {
     min-width: 0;
     padding: 16px;
@@ -1283,14 +1404,16 @@ textarea:disabled {
 
     .library-layout,
     .reviewer-layout,
-    .writing-layout {
+    .writing-layout,
+    .memory-layout {
         height: auto;
         grid-template-columns: 1fr;
     }
 
     .library-list,
     .reviewer-input-box,
-    .writing-input-box {
+    .writing-input-box,
+    .memory-input-box {
         border-right: 0;
         border-bottom: 1px solid var(--line);
     }

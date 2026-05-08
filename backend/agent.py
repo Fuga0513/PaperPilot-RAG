@@ -17,6 +17,7 @@ from tools import (
 from datetime import datetime
 from cache import cache
 from database import SessionLocal
+from memory_manager import MemoryManager
 from models import User, ChatSession, ChatMessage
 
 load_dotenv()
@@ -272,6 +273,31 @@ def summarize_old_messages(model, messages: list) -> str:
     return summary
 
 
+def _build_memory_system_message(owner_id: int | None, session_id: str) -> SystemMessage | None:
+    """Build transient user-scoped memory context for the Agent prompt."""
+    if owner_id is None:
+        return None
+    db = SessionLocal()
+    try:
+        context = MemoryManager(db).inject_relevant_memory_into_prompt(owner_id, session_id)
+        if not context:
+            return None
+        return SystemMessage(content=f"User-scoped memory context:\n{context}")
+    finally:
+        db.close()
+
+
+def _update_memory_session_summary(owner_id: int | None, session_id: str) -> None:
+    """Refresh short-term session summary after messages are persisted."""
+    if owner_id is None:
+        return
+    db = SessionLocal()
+    try:
+        MemoryManager(db).update_session_summary(owner_id, session_id)
+    finally:
+        db.close()
+
+
 def chat_with_agent(
     user_text: str,
     user_id: str = "default_user",
@@ -294,9 +320,13 @@ def chat_with_agent(
             SystemMessage(content=f"之前的对话摘要：\n{summary}")
         ] + messages[40:]
 
-    messages.append(HumanMessage(content=user_text))
+    memory_message = _build_memory_system_message(owner_id, session_id)
+    runtime_messages = list(messages)
+    if memory_message:
+        runtime_messages.append(memory_message)
+    runtime_messages.append(HumanMessage(content=user_text))
     result = agent.invoke(
-        {"messages": messages},
+        {"messages": runtime_messages},
         config={"recursion_limit": 8},
     )
 
@@ -314,6 +344,7 @@ def chat_with_agent(
     else:
         response_content = str(result)
     
+    messages.append(HumanMessage(content=user_text))
     messages.append(AIMessage(content=response_content))
 
     rag_context = get_last_rag_context(clear=True)
@@ -323,6 +354,7 @@ def chat_with_agent(
 
     extra_message_data = [None] * (len(messages) - 1) + [{"rag_trace": rag_trace}]
     storage.save(user_id, session_id, messages, extra_message_data=extra_message_data)
+    _update_memory_session_summary(owner_id, session_id)
 
     return {
         "response": response_content,
@@ -367,7 +399,11 @@ async def chat_with_agent_stream(
             SystemMessage(content=f"之前的对话摘要：\n{summary}")
         ] + messages[40:]
 
-    messages.append(HumanMessage(content=user_text))
+    memory_message = _build_memory_system_message(owner_id, session_id)
+    runtime_messages = list(messages)
+    if memory_message:
+        runtime_messages.append(memory_message)
+    runtime_messages.append(HumanMessage(content=user_text))
 
     full_response = ""
 
@@ -376,7 +412,7 @@ async def chat_with_agent_stream(
         nonlocal full_response
         try:
             async for msg, metadata in agent.astream(
-                {"messages": messages},
+                {"messages": runtime_messages},
                 stream_mode="messages",
                 config={"recursion_limit": 8},
             ):
@@ -447,6 +483,8 @@ async def chat_with_agent_stream(
     yield "data: [DONE]\n\n"
 
     # 保存对话
+    messages.append(HumanMessage(content=user_text))
     messages.append(AIMessage(content=full_response))
     extra_message_data = [None] * (len(messages) - 1) + [{"rag_trace": rag_trace}]
     storage.save(user_id, session_id, messages, extra_message_data=extra_message_data)
+    _update_memory_session_summary(owner_id, session_id)

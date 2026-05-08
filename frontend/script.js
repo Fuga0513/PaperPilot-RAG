@@ -50,6 +50,22 @@ createApp({
             writingResult: null,
             isRunningWritingTask: false,
             writingCopyStatus: '',
+            projects: [],
+            selectedProjectId: '',
+            projectForm: { name: '', description: '' },
+            memoryItems: [],
+            memoryQuery: '',
+            memoryForm: {
+                scope: 'global',
+                memory_type: 'preference',
+                content: '',
+                project_id: '',
+                paper_id: ''
+            },
+            isLoadingProjects: false,
+            isCreatingProject: false,
+            isLoadingMemory: false,
+            isSavingMemory: false,
             isParsingPaper: false,
             isIndexingPaper: false,
             documents: [],
@@ -79,7 +95,7 @@ createApp({
             deletePollTimers: {},
             deleteRemoveTimers: {},
 
-            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false, reviewer: false, rebuttal: false },
+            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false, reviewer: false, rebuttal: false, memory: false },
             documentsLoading: false,
             errorMessage: ''
         };
@@ -328,6 +344,10 @@ createApp({
             this.writingUserText = '';
             this.writingPaperIds = [];
             this.writingResult = null;
+            this.projects = [];
+            this.selectedProjectId = '';
+            this.memoryItems = [];
+            this.memoryForm.content = '';
             this.citations = [];
             this.ragTrace = null;
             this.toolCalls = [];
@@ -410,7 +430,130 @@ createApp({
             if (panel === 'library') this.loadPapers();
             if (panel === 'reviewer') this.loadPapers();
             if (panel === 'writing') this.loadPapers();
+            if (panel === 'memory') this.loadMemoryPanel();
             if (panel === 'history') this.loadSessions();
+        },
+
+        async loadMemoryPanel() {
+            // Load projects, papers, and memory items for the Memory / Project area.
+            await Promise.all([this.loadProjects(), this.loadPapers()]);
+            await this.loadMemoryItems();
+        },
+
+        async loadProjects() {
+            // GET /projects and update the current user's project list.
+            if (!this.requireAuth()) return;
+            this.isLoadingProjects = true;
+            try {
+                const data = await this.apiGet('/projects');
+                this.projects = data.projects || [];
+            } catch (error) {
+                this.showError('Failed to load projects: ' + error.message);
+            } finally {
+                this.isLoadingProjects = false;
+            }
+        },
+
+        async createProject() {
+            // POST /projects to create a current-user research project.
+            if (!this.requireAuth() || this.isCreatingProject) return;
+            if (!this.projectForm.name.trim()) {
+                this.showError('Project name is required.');
+                return;
+            }
+            this.isCreatingProject = true;
+            try {
+                const project = await this.apiPost('/projects', this.projectForm);
+                this.projects = [project, ...this.projects];
+                this.selectedProjectId = String(project.id);
+                this.projectForm = { name: '', description: '' };
+                await this.loadMemoryItems();
+            } catch (error) {
+                this.showError('Failed to create project: ' + error.message);
+            } finally {
+                this.isCreatingProject = false;
+            }
+        },
+
+        async loadMemoryItems() {
+            // GET /memory and show only the current user's memory items.
+            if (!this.requireAuth()) return;
+            this.isLoadingMemory = true;
+            try {
+                const params = new URLSearchParams();
+                if (this.memoryQuery.trim()) params.set('query', this.memoryQuery.trim());
+                if (this.selectedProjectId) params.set('project_id', this.selectedProjectId);
+                const data = await this.apiGet(`/memory${params.toString() ? '?' + params.toString() : ''}`);
+                this.memoryItems = data.memories || [];
+            } catch (error) {
+                this.showError('Failed to load memory: ' + error.message);
+            } finally {
+                this.isLoadingMemory = false;
+            }
+        },
+
+        async saveMemoryItem() {
+            // POST /memory to save explicit user-approved memory content.
+            if (!this.requireAuth() || this.isSavingMemory) return;
+            if (!this.memoryForm.content.trim()) {
+                this.showError('Memory content is required.');
+                return;
+            }
+            this.isSavingMemory = true;
+            try {
+                const payload = this.buildMemoryPayload();
+                const item = await this.apiPost('/memory', payload);
+                this.memoryItems = [item, ...this.memoryItems];
+                this.memoryForm.content = '';
+            } catch (error) {
+                this.showError('Failed to save memory: ' + error.message);
+            } finally {
+                this.isSavingMemory = false;
+            }
+        },
+
+        buildMemoryPayload() {
+            // Build request body for user-scoped MemoryItem creation.
+            const projectId = this.memoryForm.project_id || this.selectedProjectId;
+            return {
+                scope: this.memoryForm.scope,
+                memory_type: this.memoryForm.memory_type,
+                content: this.memoryForm.content,
+                source_session_id: this.currentSessionId,
+                project_id: projectId ? Number(projectId) : null,
+                paper_id: this.memoryForm.paper_id ? Number(this.memoryForm.paper_id) : null,
+                metadata_json: { saved_from: 'frontend' }
+            };
+        },
+
+        async deleteMemoryItem(memoryId) {
+            // DELETE /memory/{id}; users can delete only their own memory.
+            if (!this.requireAuth()) return;
+            try {
+                await this.apiDelete(`/memory/${encodeURIComponent(memoryId)}`);
+                this.memoryItems = this.memoryItems.filter(item => item.id !== memoryId);
+            } catch (error) {
+                this.showError('Failed to delete memory: ' + error.message);
+            }
+        },
+
+        fillMemoryFromLatestAssistant() {
+            // Copy latest assistant answer into the Save Memory form.
+            const latest = [...this.messages].reverse().find(msg => !msg.isUser && msg.text);
+            if (!latest) {
+                this.showError('No assistant answer is available to save.');
+                return;
+            }
+            this.memoryForm.content = latest.text;
+        },
+
+        fillMemoryFromUserInput() {
+            // Copy current chat input into the Save Memory form.
+            if (!this.userInput.trim()) {
+                this.showError('Current input is empty.');
+                return;
+            }
+            this.memoryForm.content = this.userInput;
         },
 
         async uploadPaperFile(file) {

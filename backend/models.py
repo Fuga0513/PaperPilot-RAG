@@ -17,6 +17,8 @@ class User(Base):
 
     sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
     papers = relationship("Paper", back_populates="owner", cascade="all, delete-orphan")
+    research_projects = relationship("ResearchProject", back_populates="owner", cascade="all, delete-orphan")
+    memory_items = relationship("MemoryItem", back_populates="owner", cascade="all, delete-orphan")
 
 
 class ChatSession(Base):
@@ -139,3 +141,57 @@ class PaperMetadata(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     paper = relationship("Paper", back_populates="extraction")
+
+
+class ResearchProject(Base):
+    """User-owned research project for grouping papers, tasks, and memories."""
+
+    __tablename__ = "research_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    owner = relationship("User", back_populates="research_projects")
+    memory_items = relationship("MemoryItem", back_populates="project", cascade="all, delete-orphan")
+    project_memories = relationship("ProjectMemory", back_populates="project", cascade="all, delete-orphan")
+
+
+class MemoryItem(Base):
+    """User-owned memory item for preferences, tasks, project context, and session notes."""
+
+    __tablename__ = "memory_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    memory_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    source_session_id: Mapped[str] = mapped_column(String(120), default="", nullable=False, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    paper_id: Mapped[int | None] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    owner = relationship("User", back_populates="memory_items")
+    project = relationship("ResearchProject", back_populates="memory_items")
+
+
+class ProjectMemory(Base):
+    """Project-scoped memory snapshot for project goals, status, and writing state."""
+
+    __tablename__ = "project_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    memory_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    project = relationship("ResearchProject", back_populates="project_memories")

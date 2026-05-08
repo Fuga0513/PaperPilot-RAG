@@ -350,3 +350,59 @@ class ResearchWritingResponse(BaseModel):
     revision_notes: List[str] = []
     rag_trace: Optional[RagTrace] = None
     tool_calls: Optional[List[ToolCallOut]] = None
+
+
+class ResearchProjectCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+
+
+class ResearchProjectOut(BaseModel):
+    id: int
+    owner_id: int
+    name: str
+    description: str
+    created_at: str
+    updated_at: str
+
+
+class MemoryItemCreate(BaseModel):
+    scope: str = "global"
+    memory_type: str = "preference"
+    content: str
+    metadata_json: Optional[dict] = None
+    source_session_id: Optional[str] = ""
+    project_id: Optional[int] = None
+    paper_id: Optional[int] = None
+
+
+class MemoryItemOut(BaseModel):
+    id: int
+    owner_id: int
+    scope: str
+    memory_type: str
+    content: str
+    metadata_json: dict = {}
+    source_session_id: str
+    project_id: Optional[int] = None
+    paper_id: Optional[int] = None
+    created_at: str
+    updated_at: str
+
+
+class MemoryListResponse(BaseModel):
+    memories: List[MemoryItemOut]
+
+
+class ProjectListResponse(BaseModel):
+    projects: List[ResearchProjectOut]
+
+
+class MemoryDeleteResponse(BaseModel):
+    memory_id: int
+    message: str
+
+
+class MemoryContextResponse(BaseModel):
+    context: str
+    session_summary: str = ""
