@@ -1,6 +1,6 @@
 # PaperPilot-RAG Architecture
 
-This document explains the current architecture of PaperPilot-RAG after the project was refactored from SuperMew into a user-scoped research RAG system.
+This document explains the current architecture of PaperPilot-RAG as a user-scoped research RAG system.
 
 ## 1. Backend Module Structure
 

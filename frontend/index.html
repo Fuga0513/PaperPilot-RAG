@@ -81,12 +81,6 @@
                     <button @click="handleHistory" :class="['nav-btn', {active: activeNav === 'history'}]">
                         <i class="fas fa-clock-rotate-left"></i> Session History
                     </button>
-                    <button @click="setActivePanel('memory')" :class="['nav-btn', {active: activeNav === 'memory'}]">
-                        <i class="fas fa-diagram-project"></i> Memory / Project
-                    </button>
-                    <button @click="setActivePanel('evaluation')" :class="['nav-btn', {active: activeNav === 'evaluation'}]">
-                        <i class="fas fa-chart-simple"></i> Evaluation Report
-                    </button>
                     <button v-if="isAdmin" @click="setActivePanel('documents')" :class="['nav-btn', {active: activeNav === 'documents'}]">
                         <i class="fas fa-folder-tree"></i> Global Documents
                     </button>
@@ -109,14 +103,14 @@
                     </div>
                 </section>
 
-                <section class="sidebar-section">
-                    <h3>Tools</h3>
-                    <button class="tool-entry" @click="setActivePanel('library')">Paper Comparison</button>
+                <details class="sidebar-section advanced-tools">
+                    <summary>Advanced Tools</summary>
                     <button class="tool-entry" @click="setActivePanel('reviewer')">Reviewer Analysis</button>
                     <button class="tool-entry" @click="setActivePanel('writing')">Research Writing</button>
+                    <button class="tool-entry" @click="setActivePanel('memory')">Memory / Project</button>
                     <button class="tool-entry" @click="setActivePanel('evaluation')">Evaluation Report</button>
                     <button v-if="isAdmin" class="tool-entry" @click="setActivePanel('documents')">Global Document Admin</button>
-                </section>
+                </details>
             </aside>
 
             <main class="main-content main-area">
@@ -155,9 +149,17 @@
                                     <i :class="loading.papers ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
                                 </button>
                             </div>
+                            <div class="workspace-tabs">
+                                <button :class="{active: activeLibraryTab === 'papers'}" @click="activeLibraryTab = 'papers'">
+                                    <i class="fas fa-list"></i> Papers
+                                </button>
+                                <button :class="{active: activeLibraryTab === 'comparison'}" @click="activeLibraryTab = 'comparison'">
+                                    <i class="fas fa-table-columns"></i> Comparison
+                                </button>
+                            </div>
                             <div class="library-layout">
                                 <div class="library-list">
-                                    <section class="comparison-box">
+                                    <section v-if="activeLibraryTab === 'comparison'" class="comparison-box">
                                         <div class="comparison-heading">
                                             <div>
                                                 <strong>Paper Comparison</strong>
@@ -324,7 +326,7 @@
                             <div class="panel-header">
                                 <div>
                                     <h2>Global Documents</h2>
-                                    <p>Admin-only SuperMew knowledge base. These files are shared global RAG documents, separate from user-owned papers.</p>
+                                    <p>Admin-only PaperPilot-RAG knowledge base. These files are shared global RAG documents, separate from user-owned papers.</p>
                                 </div>
                                 <button class="secondary-action" :disabled="documentsLoading" @click="loadDocuments">
                                     <i :class="documentsLoading ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh

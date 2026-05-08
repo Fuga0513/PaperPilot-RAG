@@ -1,3 +1,9 @@
+"""Retrieval utilities for PaperPilot-RAG.
+
+This module owns dense, sparse, hybrid, rerank, rewrite, and auto-merge helpers
+used by the RAG pipeline and evaluation code.
+"""
+
 from collections import defaultdict
 from typing import List, Tuple, Dict, Any
 import json

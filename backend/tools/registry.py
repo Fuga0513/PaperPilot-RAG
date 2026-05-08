@@ -1,9 +1,11 @@
-"""LangChain tools for SuperMew/PaperPilot.
+"""LangChain tools for PaperPilot-RAG.
 
 This module is the boundary between the Agent and the custom RAG pipeline. Tool
 functions may be selected by LangChain, but retrieval itself stays in
 rag_pipeline/rag_utils so Milvus hybrid search, BM25, RRF, rerank, auto-merging,
 RAG trace, and SSE step events remain under our control.
+
+Legacy compatibility tools remain registered for existing call sites.
 """
 
 from typing import Optional

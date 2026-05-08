@@ -1,6 +1,6 @@
 # PaperPilot-RAG LangChain Usage
 
-This document summarizes how the current SuperMew-derived codebase uses
+This document summarizes how the current PaperPilot-RAG codebase uses
 LangChain/LangGraph and where PaperPilot-RAG should extend it.
 
 ## 1. Current LangChain Modules
@@ -29,7 +29,7 @@ LangChain/LangGraph and where PaperPilot-RAG should extend it.
 
 - `langchain_core.tools.tool`
   - Keeps the legacy `search_knowledge_base` tool name compatible with the
-    original SuperMew flow.
+    original PaperPilot-RAG flow.
 - `langchain_core.tools.StructuredTool`
   - Registers PaperPilot research tools with explicit Pydantic argument schemas.
 - `pydantic.BaseModel`

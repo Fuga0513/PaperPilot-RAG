@@ -1,7 +1,7 @@
-"""Authenticated PaperPilot paper-library APIs.
+"""Authenticated PaperPilot-RAG paper-library APIs.
 
-Stage 6 introduces PostgreSQL tables and user-scoped read/delete endpoints.
-Upload parsing and Milvus deletion are intentionally deferred to later stages.
+This module owns paper upload, parse/index workflow endpoints, paper metadata
+views, and advanced paper tools while preserving the existing route surface.
 """
 
 import logging

@@ -1,28 +1,40 @@
 # PaperPilot-RAG
 
-PaperPilot-RAG is a research-oriented Agentic RAG application adapted from the original SuperMew project. It keeps the authentication and session infrastructure, then adds user-scoped paper management, scientific-paper parsing, citation-grounded question answering, paper comparison, reviewer-response assistance, writing support, memory, and retrieval evaluation.
+PaperPilot-RAG is a research-oriented Agentic RAG application for user-scoped paper management, scientific-paper parsing, citation-grounded question answering, paper comparison, reviewer-response assistance, writing support, memory, and retrieval evaluation.
 
 The project is designed as a portfolio-friendly full-stack AI system: FastAPI backend, Vue CDN frontend, PostgreSQL user data, Redis cache, Milvus hybrid vector retrieval, LangChain Agent tools, and an observable RAG pipeline.
 
 > This repository does not include real API keys. Copy `.env.example` to `.env` and fill local secrets before running.
 
-## Core Features
+## Features
 
-- Login, registration, JWT authentication, and role-aware access control.
+### Core Features
+
+- Login / Auth: registration, JWT authentication, and role-aware access control.
 - User-level Paper Library with owner-scoped paper records, chunks, metadata, and vector filters.
-- Scientific PDF/DOCX/TXT parsing for uploaded research papers.
-- Section-aware and hierarchy-aware chunking with `chunk_level`, `parent_chunk_id`, and `root_chunk_id`.
-- Hybrid Search with dense embeddings plus BM25 sparse vectors in Milvus.
-- Optional rerank stage through a rerank-compatible HTTP endpoint.
+- Scientific paper parsing for uploaded PDF, DOCX, and TXT research papers.
+- Section-aware chunking with `chunk_level`, `parent_chunk_id`, and `root_chunk_id`.
+- Milvus Hybrid Search with dense embeddings plus BM25 sparse vectors.
+- Rerank through an optional rerank-compatible HTTP endpoint.
 - Query Rewrite with Step-back and HyDE expansion paths.
-- Citation-grounded answers with stable citation ids such as `[C1]`.
+- Citation-grounded QA with stable citation ids such as `[C1]`.
 - RAG Trace for retrieval mode, rewrite route, rerank status, selected chunks, and citations.
+
+### Advanced Research Tools
+
 - Multi-paper comparison with evidence-backed Markdown tables.
-- Reviewer comment analysis into issue type, severity, response strategy, required action, and evidence need.
+- Reviewer analysis into issue type, severity, response strategy, required action, and evidence need.
 - Rebuttal drafting grounded in the current user's paper evidence.
-- Research writing assistance for related work, abstract rewriting, contribution polishing, introduction logic checks, grant-question polishing, and experiment-setting summaries.
-- Long-term and short-term memory through PostgreSQL records plus session summaries.
-- RAG retrieval evaluation with strategy ablations and Markdown/JSON reports.
+- Research writing for abstract rewriting, contribution polishing, introduction logic checks, grant-question polishing, and experiment-setting summaries.
+- Related Work generation from retrieved private-paper evidence.
+
+### Experimental / Engineering Extensions
+
+- Memory through PostgreSQL records plus session summaries.
+- Evaluation with retrieval strategy ablations and Markdown/JSON reports.
+- Graph RAG roadmap over paper entities, citations, methods, datasets, and claims.
+- MCP roadmap for external research-system integrations.
+- Multimodal roadmap for chart/table understanding.
 
 ## Tech Stack
 
@@ -62,7 +74,7 @@ Key backend folders after the structural refactor:
 - `backend/tools/`: LangChain tool registry, schemas, user context, and weather compatibility tool.
 - `backend/evaluation/`: retrieval evaluation runner and metrics.
 
-More details are in [docs/architecture.md](docs/architecture.md).
+More details are in [docs/architecture.md](docs/architecture.md) and [docs/code_structure.md](docs/code_structure.md).
 
 ## Database Design
 

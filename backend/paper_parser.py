@@ -1,8 +1,8 @@
 """Research-paper parsing and section-aware chunking.
 
-The parser keeps the original document upload pipeline untouched. It reuses the
-same three-level chunk fields that SuperMew needs for auto-merging while adding
-paper-specific metadata such as section title, page range, and chunk type.
+The parser preserves the shared three-level chunk fields used by auto-merging
+while adding paper-specific metadata such as section title, page range, and
+chunk type.
 """
 
 from __future__ import annotations

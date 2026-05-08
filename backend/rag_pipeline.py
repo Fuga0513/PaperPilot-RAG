@@ -1,3 +1,9 @@
+"""LangGraph retrieval pipeline for PaperPilot-RAG.
+
+The graph coordinates initial retrieval, evidence grading, query rewrite, and
+expanded retrieval while leaving Milvus strategy details in rag_utils.py.
+"""
+
 from typing import Literal, TypedDict, List, Optional
 import os
 from dotenv import load_dotenv

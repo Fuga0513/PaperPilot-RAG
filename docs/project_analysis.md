@@ -54,7 +54,7 @@ flowchart TD
 
 FastAPI 入口在 `backend/app.py`。
 
-- `create_app()` 创建 `FastAPI(title="Cute Cat Bot API")`。
+- `create_app()` 创建 `FastAPI(title="PaperPilot-RAG API")`。
 - 启动事件 `_startup_init_db()` 调用 `init_db()`，用 SQLAlchemy 自动创建表。
 - 配置 CORS 为全开放。
 - 添加开发期 no-cache middleware，避免前端 HTML/JS/CSS 缓存。
@@ -75,7 +75,7 @@ API 路由目前集中在 `backend/api.py`，尚未拆成多个 router 文件。
 
 ## 3. 前端 Vue 3 CDN 文件位置
 
-当前前端是 SuperMew 原有的 Vue 3 CDN 单页形式：
+当前前端是 PaperPilot-RAG 的 Vue 3 CDN 单页形式：
 
 - `frontend/index.html`：页面结构，加载 Vue 3 CDN、marked、highlight.js、Font Awesome 和 `script.js` / `style.css`。
 - `frontend/script.js`：Vue `createApp`，包含认证、会话、SSE 聊天、上传、删除、文档列表、RAG Trace 展示等逻辑。
@@ -559,7 +559,7 @@ Milvus：
 - `backend/agent.py` / `backend/tools.py`
   - Agent + tool 调用框架可复用，但 system prompt 和 tools 后续需要面向科研论文改造。
 - `frontend/index.html` / `frontend/script.js` / `frontend/style.css`
-  - Vue 3 CDN 结构和 SSE 读取方式可复用，后续由 PaperPilot-RAG 页面逐步替换 SuperMew UI。
+  - Vue 3 CDN 结构和 SSE 读取方式可复用，后续可继续拆分 PaperPilot-RAG UI。
 
 ## 19. 后续改造时不建议轻易修改的模块
 
@@ -596,7 +596,7 @@ Milvus：
 ## 20. 建议的后续修改顺序
 
 1. 基础品牌与文案清理
-   - 将 SuperMew / Cute Cat Bot 文案替换为 PaperPilot-RAG。
+   - 将历史项目文案替换为 PaperPilot-RAG。
    - 修复前端和后端用户可见中文乱码。
    - 保持 Vue 3 CDN 和现有文件结构。
 
@@ -646,4 +646,3 @@ Milvus：
 - 上传/删除 job 状态为进程内存，服务重启会丢任务进度。
 - `get_current_weather` 目前未显式 `@tool` 装饰，后续升级 LangChain 版本时需验证兼容性。
 - `main.py` 只是打印 LangChain 版本，不是应用入口。
-

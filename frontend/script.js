@@ -19,6 +19,7 @@ createApp({
 
             activeNav: 'chat',
             activeWorkspaceTab: 'chat',
+            activeLibraryTab: 'papers',
             collapsedEvidenceSections: {
                 citations: false,
                 trace: false,
@@ -1102,7 +1103,7 @@ createApp({
         },
 
         async loadDocuments() {
-            // GET /documents for admins to manage the global SuperMew knowledge base.
+            // GET /documents for admins to manage the global PaperPilot-RAG knowledge base.
             if (!this.isAdmin) {
                 this.documents = [];
                 return;

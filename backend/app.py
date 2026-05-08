@@ -11,7 +11,7 @@ from database import init_db
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Cute Cat Bot API")
+    app = FastAPI(title="PaperPilot-RAG API")
 
     @app.on_event("startup")
     async def _startup_init_db():

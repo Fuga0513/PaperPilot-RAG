@@ -233,6 +233,16 @@ textarea:disabled {
     margin-bottom: 10px;
 }
 
+.advanced-tools summary {
+    margin-bottom: 10px;
+    color: #98a2b3;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 800;
+    list-style-position: inside;
+    text-transform: uppercase;
+}
+
 .selected-paper {
     display: flex;
     flex-direction: column;
@@ -363,6 +373,34 @@ textarea:disabled {
     font-size: 1.05rem;
 }
 
+.workspace-tabs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-soft);
+}
+
+.workspace-tabs button {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: white;
+    color: var(--muted);
+    font-weight: 800;
+}
+
+.workspace-tabs button.active {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: #eff6ff;
+}
+
 .mini-panel {
     padding: 14px;
 }
@@ -382,7 +420,7 @@ textarea:disabled {
 }
 
 .library-layout {
-    height: calc(100% - 68px);
+    height: calc(100% - 117px);
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(260px, 0.95fr) minmax(280px, 1.05fr);
