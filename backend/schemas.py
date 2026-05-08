@@ -29,6 +29,7 @@ class CurrentUserResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default_session"
+    retrieval_scope: str = "private"
     use_global_knowledge: bool = False
 
 

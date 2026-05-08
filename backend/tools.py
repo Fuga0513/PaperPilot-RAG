@@ -94,6 +94,7 @@ def set_tool_user_context(
     role: str | None = None,
     owner_id: int | None = None,
     use_global_knowledge: bool = False,
+    retrieval_scope: str = "private",
 ) -> None:
     """Set the current request user context for future retrieval filters.
 
@@ -101,11 +102,17 @@ def set_tool_user_context(
     this user_id must be propagated into Milvus and PostgreSQL filters.
     """
     global _CURRENT_TOOL_USER_CONTEXT
+    scope = (retrieval_scope or "private").strip().lower()
+    if use_global_knowledge and scope == "private":
+        scope = "private_plus_global"
+    if scope not in {"private", "global", "private_plus_global"}:
+        scope = "private"
     _CURRENT_TOOL_USER_CONTEXT = {
         "user_id": user_id,
         "role": role,
         "owner_id": owner_id,
-        "use_global_knowledge": bool(use_global_knowledge),
+        "use_global_knowledge": scope == "private_plus_global",
+        "retrieval_scope": scope,
     }
 
 
@@ -247,6 +254,8 @@ def _run_combined_rag_search(query: str) -> str:
 
     from rag_pipeline import run_rag_graph
 
+    from rag_utils import rerank_documents
+
     paper_result = run_rag_graph(query, owner_id=owner_id, source_type="paper")
     global_result = run_rag_graph(query, source_type="document")
     paper_docs = paper_result.get("docs", []) if isinstance(paper_result, dict) else []
@@ -260,7 +269,7 @@ def _run_combined_rag_search(query: str) -> str:
             continue
         seen.add(key)
         docs.append(doc)
-    docs = docs[:8]
+    docs, unified_rerank_meta = rerank_documents(query=query, docs=docs, top_k=8)
 
     citations = build_citations(docs, owner_id=owner_id)
     cited_ids = {item.get("citation_id") for item in citations}
@@ -275,9 +284,13 @@ def _run_combined_rag_search(query: str) -> str:
         "retrieval_stage": "combined",
         "retrieval_mode": "private_papers_plus_global_documents",
         "retrieval_scope": "paper+document",
+        "retrieval_scope_request": "private_plus_global",
         "owner_filter_applied": True,
         "user_filter_applied": True,
         "global_knowledge_enabled": True,
+        "unified_rerank_applied": unified_rerank_meta.get("rerank_applied"),
+        "unified_rerank_enabled": unified_rerank_meta.get("rerank_enabled"),
+        "unified_rerank_error": unified_rerank_meta.get("rerank_error"),
         "private_paper_chunk_count": len(paper_docs),
         "global_document_chunk_count": len(global_docs),
         "citations": citations,
@@ -371,7 +384,10 @@ def search_knowledge_base(query: str) -> str:
 def _search_research_documents(query: str) -> str:
     """Search research papers, project docs, reviews, and notes."""
     user_context = get_tool_user_context() or {}
-    if user_context.get("use_global_knowledge"):
+    scope = user_context.get("retrieval_scope") or "private"
+    if scope == "global":
+        return _run_rag_search(query=query, tool_name="search_research_documents", source_type="document")
+    if scope == "private_plus_global":
         return _run_combined_rag_search(query=query)
     return _run_rag_search(query=query, tool_name="search_research_documents", source_type="paper")
 

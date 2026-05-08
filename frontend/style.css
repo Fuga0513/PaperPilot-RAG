@@ -1068,7 +1068,7 @@ textarea:disabled {
     gap: 14px;
 }
 
-.global-knowledge-toggle {
+.retrieval-scope-control {
     min-height: 40px;
     display: inline-flex;
     align-items: center;
@@ -1080,6 +1080,14 @@ textarea:disabled {
     color: var(--muted);
     font-weight: 800;
     white-space: nowrap;
+}
+
+.retrieval-scope-control select {
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font-weight: 800;
+    outline: none;
 }
 
 .welcome-screen {

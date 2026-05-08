@@ -24,34 +24,34 @@
                         <p class="auth-subtitle">Research-Oriented Agentic RAG Assistant</p>
                     </div>
                 </div>
-                <p class="auth-description">请登录后管理你的科研论文库、会话和 RAG 工具。</p>
+                <p class="auth-description">Log in to manage your research paper library, chat sessions, and RAG tools.</p>
 
                 <div v-if="authError" class="auth-alert auth-alert-error">{{ authError }}</div>
                 <div v-if="authNotice" class="auth-alert auth-alert-success">{{ authNotice }}</div>
 
                 <form class="auth-form" @submit.prevent="handleAuthSubmit">
-                    <input v-model="authForm.username" type="text" autocomplete="username" placeholder="用户名" :disabled="authLoading">
-                    <input v-model="authForm.password" type="password" autocomplete="current-password" placeholder="密码" :disabled="authLoading">
+                    <input v-model="authForm.username" type="text" autocomplete="username" placeholder="Username" :disabled="authLoading">
+                    <input v-model="authForm.password" type="password" autocomplete="current-password" placeholder="Password" :disabled="authLoading">
                     <select v-if="authMode === 'register'" v-model="authForm.role" :disabled="authLoading">
-                        <option value="user">普通用户</option>
-                        <option value="admin">管理员</option>
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
                     </select>
                     <input
                         v-if="authMode === 'register' && authForm.role === 'admin'"
                         v-model="authForm.admin_code"
                         type="password"
-                        placeholder="管理员邀请码"
+                        placeholder="Admin invite code"
                         :disabled="authLoading"
                     >
                     <p v-if="authMode === 'register' && authForm.role === 'admin'" class="auth-help">
-                        管理员账号需要填写后端 .env 中配置的 ADMIN_INVITE_CODE。
+                        Admin accounts require the ADMIN_INVITE_CODE configured in the backend .env file.
                     </p>
                     <button type="submit" class="primary-action" :disabled="authLoading || !authForm.username || !authForm.password">
                         <i v-if="authLoading" class="fas fa-spinner fa-spin"></i>
-                        <span>{{ authLoading ? '提交中...' : (authMode === 'login' ? '登录' : '注册') }}</span>
+                        <span>{{ authLoading ? 'Submitting...' : (authMode === 'login' ? 'Log In' : 'Register') }}</span>
                     </button>
                     <button type="button" class="text-action" :disabled="authLoading" @click="switchAuthMode">
-                        {{ authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录' }}
+                        {{ authMode === 'login' ? 'Need an account? Register' : 'Already have an account? Log in' }}
                     </button>
                 </form>
             </section>
@@ -123,7 +123,7 @@
                             <small>{{ currentUser.role }}</small>
                         </div>
                         <button class="secondary-action" @click="logout()">
-                            <i class="fas fa-right-from-bracket"></i> 退出登录
+                            <i class="fas fa-right-from-bracket"></i> Log out
                         </button>
                     </div>
                 </header>
@@ -847,7 +847,8 @@
                                     <h2>Chat with Papers</h2>
                                     <p>Current session: {{ currentSessionId }}</p>
                                     <p v-if="papers.length > 0 && !hasIndexedPapers" class="chat-warning">Please index at least one paper before chatting with your Paper Library.</p>
-                                    <p v-if="useGlobalKnowledge" class="admin-note">Public knowledge base mode is on: answers may use administrator-uploaded Global Documents as read-only evidence.</p>
+                                    <p v-if="retrievalScope === 'global'" class="admin-note">Retrieval scope: Global Documents only.</p>
+                                    <p v-if="retrievalScope === 'private_plus_global'" class="admin-note">Retrieval scope: private Paper Library plus administrator-uploaded Global Documents.</p>
                                 </div>
                                 <button class="secondary-action" @click="handleClearChat" :disabled="messages.length === 0 || isLoading">
                                     <i class="fas fa-eraser"></i> Clear
@@ -877,9 +878,13 @@
 
                             <div class="input-area-wrapper">
                                 <div class="input-area">
-                                    <label class="global-knowledge-toggle">
-                                        <input type="checkbox" v-model="useGlobalKnowledge" :disabled="isLoading">
-                                        <span>Include Global Knowledge</span>
+                                    <label class="retrieval-scope-control">
+                                        <span>Retrieval</span>
+                                        <select v-model="retrievalScope" :disabled="isLoading">
+                                            <option value="private">Private papers</option>
+                                            <option value="private_plus_global">Private + global</option>
+                                            <option value="global">Global only</option>
+                                        </select>
                                     </label>
                                     <textarea
                                         ref="textarea"

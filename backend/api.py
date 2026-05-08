@@ -50,8 +50,18 @@ milvus_writer = MilvusWriter(embedding_service=embedding_service, milvus_manager
 router = APIRouter()
 
 
+def _chat_retrieval_scope(request: ChatRequest) -> str:
+    """Normalize chat retrieval scope while keeping the old boolean compatible."""
+    scope = (request.retrieval_scope or "private").strip().lower()
+    if request.use_global_knowledge and scope == "private":
+        scope = "private_plus_global"
+    if scope not in {"private", "global", "private_plus_global"}:
+        raise HTTPException(status_code=400, detail="Invalid retrieval_scope")
+    return scope
+
+
 def _remove_bm25_stats_for_filename(filename: str) -> None:
-    """删除 Milvus 中该文件对应 chunk 前，先从持久化 BM25 统计中扣减。"""
+    """Remove matching document chunks from persistent BM25 state before vector deletion."""
     rows = milvus_manager.query_all(
         filter_expr=f'source_type == "document" and filename == "{filename}"',
         output_fields=["text"],
@@ -65,11 +75,11 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     username = (request.username or "").strip()
     password = (request.password or "").strip()
     if not username or not password:
-        raise HTTPException(status_code=400, detail="用户名和密码不能为空")
+        raise HTTPException(status_code=400, detail="Username and password are required")
 
     exists = db.query(User).filter(User.username == username).first()
     if exists:
-        raise HTTPException(status_code=409, detail="用户名已存在")
+        raise HTTPException(status_code=409, detail="Username already exists")
 
     role = resolve_role(request.role, request.admin_code)
     user = User(username=username, password_hash=get_password_hash(password), role=role)
@@ -84,7 +94,7 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
 async def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = authenticate_user(db, request.username, request.password)
     if not user:
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
     token = create_access_token(username=user.username, role=user.role)
     return AuthResponse(access_token=token, username=user.username, role=user.role)
 
@@ -96,7 +106,7 @@ async def me(current_user: User = Depends(get_current_user)):
 
 @router.get("/sessions/{session_id}", response_model=SessionMessagesResponse)
 async def get_session_messages(session_id: str, current_user: User = Depends(get_current_user)):
-    """获取指定会话的所有消息"""
+    """Return all messages for one current-user session."""
     try:
         messages = [
             MessageInfo(
@@ -114,7 +124,7 @@ async def get_session_messages(session_id: str, current_user: User = Depends(get
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(current_user: User = Depends(get_current_user)):
-    """获取当前用户的所有会话列表"""
+    """Return the current user session list."""
     try:
         sessions = [SessionInfo(**item) for item in storage.list_session_infos(current_user.username)]
         sessions.sort(key=lambda x: x.updated_at, reverse=True)
@@ -125,12 +135,12 @@ async def list_sessions(current_user: User = Depends(get_current_user)):
 
 @router.delete("/sessions/{session_id}", response_model=SessionDeleteResponse)
 async def delete_session(session_id: str, current_user: User = Depends(get_current_user)):
-    """删除当前用户的指定会话"""
+    """Delete one current-user session."""
     try:
         deleted = storage.delete_session(current_user.username, session_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail="会话不存在")
-        return SessionDeleteResponse(session_id=session_id, message="成功删除会话")
+            raise HTTPException(status_code=404, detail="Session not found")
+        return SessionDeleteResponse(session_id=session_id, message="Session deleted")
     except HTTPException:
         raise
     except Exception as e:
@@ -141,13 +151,14 @@ async def delete_session(session_id: str, current_user: User = Depends(get_curre
 async def chat_endpoint(request: ChatRequest, current_user: User = Depends(get_current_user)):
     try:
         session_id = request.session_id or "default_session"
+        retrieval_scope = _chat_retrieval_scope(request)
         resp = chat_with_agent(
             request.message,
             current_user.username,
             session_id,
             owner_id=current_user.id,
             role=current_user.role,
-            use_global_knowledge=request.use_global_knowledge,
+            retrieval_scope=retrieval_scope,
         )
         if isinstance(resp, dict):
             return ChatResponse(**resp)
@@ -161,8 +172,8 @@ async def chat_endpoint(request: ChatRequest, current_user: User = Depends(get_c
                 raise HTTPException(
                     status_code=429,
                     detail=(
-                        "上游模型服务触发限流/额度限制（429）。请检查账号额度/模型状态。\n"
-                        f"原始错误：{message}"
+                        "The upstream model service returned HTTP 429. Check account quota, rate limits, or model status.\n"
+                        f"Original error: {message}"
                     ),
                 )
             if code in (401, 403):
@@ -173,18 +184,19 @@ async def chat_endpoint(request: ChatRequest, current_user: User = Depends(get_c
 
 @router.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest, current_user: User = Depends(get_current_user)):
-    """跟 Agent 对话 (流式)"""
+    """Stream an Agent chat response over SSE."""
 
     async def event_generator():
         try:
             session_id = request.session_id or "default_session"
+            retrieval_scope = _chat_retrieval_scope(request)
             async for chunk in chat_with_agent_stream(
                 request.message,
                 current_user.username,
                 session_id,
                 owner_id=current_user.id,
                 role=current_user.role,
-                use_global_knowledge=request.use_global_knowledge,
+                retrieval_scope=retrieval_scope,
             ):
                 yield chunk
         except Exception as e:
@@ -212,7 +224,7 @@ def _is_supported_document(filename: str) -> bool:
 
 
 async def _save_upload_file(file: UploadFile, file_path: Path) -> None:
-    """按块写入上传文件，避免大文件一次性读入内存。"""
+    """Save an uploaded file in chunks to avoid loading large files into memory."""
     with open(file_path, "wb") as f:
         while True:
             chunk = await file.read(1024 * 1024)
@@ -222,13 +234,13 @@ async def _save_upload_file(file: UploadFile, file_path: Path) -> None:
 
 
 def _process_upload_job(job_id: str, file_path: str, filename: str) -> None:
-    """后台执行耗时的解析、分块、向量化入库，并持续更新任务进度。"""
+    """Run global document parsing, chunking, embedding, and job progress updates."""
     failed_step = "cleanup"
     try:
-        upload_job_manager.complete_step(job_id, "upload", "文件已保存到服务器")
+        upload_job_manager.complete_step(job_id, "upload", "File saved on server")
 
         failed_step = "cleanup"
-        upload_job_manager.update_step(job_id, "cleanup", 10, "running", "正在清理同名旧文档")
+        upload_job_manager.update_step(job_id, "cleanup", 10, "running", "Cleaning old chunks for the same filename")
         milvus_manager.init_collection()
         delete_expr = f'source_type == "document" and filename == "{filename}"'
         try:
@@ -243,28 +255,28 @@ def _process_upload_job(job_id: str, file_path: str, filename: str) -> None:
             parent_chunk_store.delete_by_filename(filename)
         except Exception:
             pass
-        upload_job_manager.complete_step(job_id, "cleanup", "旧版本清理完成")
+        upload_job_manager.complete_step(job_id, "cleanup", "Old chunks cleaned")
 
         failed_step = "parse"
-        upload_job_manager.update_step(job_id, "parse", 5, "running", "正在解析文档并执行三级分块")
+        upload_job_manager.update_step(job_id, "parse", 5, "running", "Parsing document and building three-level chunks")
         new_docs = loader.load_document(file_path, filename)
         if not new_docs:
-            raise ValueError("文档处理失败，未能提取内容")
+            raise ValueError("Document processing failed: no content extracted")
 
         parent_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) in (1, 2)]
         leaf_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) == 3]
         if not leaf_docs:
-            raise ValueError("文档处理失败，未生成可检索叶子分块")
+            raise ValueError("Document processing failed: no searchable leaf chunks were generated")
         upload_job_manager.complete_step(
             job_id,
             "parse",
-            f"解析完成：父级分块 {len(parent_docs)} 个，叶子分块 {len(leaf_docs)} 个",
+            f"Parsing complete: {len(parent_docs)} parent chunks, {len(leaf_docs)} leaf chunks",
         )
 
         failed_step = "parent_store"
-        upload_job_manager.update_step(job_id, "parent_store", 20, "running", "正在写入父级分块")
+        upload_job_manager.update_step(job_id, "parent_store", 20, "running", "Writing parent chunks")
         parent_chunk_store.upsert_documents(parent_docs)
-        upload_job_manager.complete_step(job_id, "parent_store", f"父级分块已入库：{len(parent_docs)} 个")
+        upload_job_manager.complete_step(job_id, "parent_store", f"Parent chunks stored: {len(parent_docs)}")
 
         failed_step = "vector_store"
         total_leaf = len(leaf_docs)
@@ -273,7 +285,7 @@ def _process_upload_job(job_id: str, file_path: str, filename: str) -> None:
             "vector_store",
             0,
             "running",
-            f"正在向量化入库：0 / {total_leaf}",
+            f"Embedding and indexing: 0 / {total_leaf}",
             total_chunks=total_leaf,
             processed_chunks=0,
         )
@@ -285,53 +297,53 @@ def _process_upload_job(job_id: str, file_path: str, filename: str) -> None:
                 "vector_store",
                 percent,
                 "running",
-                f"正在向量化入库：{processed} / {total}",
+                f"Embedding and indexing: {processed} / {total}",
                 total_chunks=total,
                 processed_chunks=processed,
             )
 
         milvus_writer.write_documents(leaf_docs, progress_callback=_on_vector_progress)
-        upload_job_manager.complete_step(job_id, "vector_store", f"向量化入库完成：{total_leaf} 个叶子分块")
-        upload_job_manager.complete_job(job_id, f"成功上传并处理 {filename}")
+        upload_job_manager.complete_step(job_id, "vector_store", f"Vector indexing complete: {total_leaf} leaf chunks")
+        upload_job_manager.complete_job(job_id, f"Uploaded and processed {filename}")
     except Exception as e:
         upload_job_manager.fail_job(job_id, failed_step, str(e))
 
 
 def _process_delete_job(job_id: str, filename: str) -> None:
-    """后台执行文档删除，并把每个删除阶段同步给前端行内进度卡片。"""
+    """Run async global document deletion and report progress to the UI."""
     failed_step = "prepare"
     try:
         failed_step = "prepare"
-        delete_job_manager.update_step(job_id, "prepare", 20, "running", "正在初始化 Milvus 集合")
+        delete_job_manager.update_step(job_id, "prepare", 20, "running", "Initializing Milvus collection")
         milvus_manager.init_collection()
         delete_expr = f'source_type == "document" and filename == "{filename}"'
-        delete_job_manager.complete_step(job_id, "prepare", "删除任务已创建")
+        delete_job_manager.complete_step(job_id, "prepare", "Delete job created")
 
         failed_step = "bm25"
-        delete_job_manager.update_step(job_id, "bm25", 20, "running", "正在同步 BM25 统计")
+        delete_job_manager.update_step(job_id, "bm25", 20, "running", "Synchronizing BM25 state")
         _remove_bm25_stats_for_filename(filename)
-        delete_job_manager.complete_step(job_id, "bm25", "BM25 统计已同步")
+        delete_job_manager.complete_step(job_id, "bm25", "BM25 state synchronized")
 
         failed_step = "milvus"
-        delete_job_manager.update_step(job_id, "milvus", 30, "running", "正在删除 Milvus 向量数据")
+        delete_job_manager.update_step(job_id, "milvus", 30, "running", "Deleting Milvus vectors")
         result = milvus_manager.delete(delete_expr)
         deleted_count = result.get("delete_count", 0) if isinstance(result, dict) else 0
-        delete_job_manager.complete_step(job_id, "milvus", f"向量数据已删除：{deleted_count} 条")
+        delete_job_manager.complete_step(job_id, "milvus", f"Milvus vectors deleted: {deleted_count}")
 
         failed_step = "parent_store"
-        delete_job_manager.update_step(job_id, "parent_store", 30, "running", "正在删除 PostgreSQL 父级分块")
+        delete_job_manager.update_step(job_id, "parent_store", 30, "running", "Deleting PostgreSQL parent chunks")
         parent_chunk_store.delete_by_filename(filename)
-        delete_job_manager.complete_step(job_id, "parent_store", "父级分块已删除")
+        delete_job_manager.complete_step(job_id, "parent_store", "Parent chunks deleted")
 
-        # 完成摘要会由前端保留 3 秒，再自动从文档列表移除。
-        delete_job_manager.complete_job(job_id, f"已删除 {filename}，向量数据 {deleted_count} 条")
+        # The frontend briefly keeps completed rows visible before refreshing the list.
+        delete_job_manager.complete_job(job_id, f"Deleted {filename}; vectors removed: {deleted_count}")
     except Exception as e:
         delete_job_manager.fail_job(job_id, failed_step, str(e))
 
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(_: User = Depends(require_admin)):
-    """获取已上传的文档列表（管理员）"""
+    """Return the admin-managed global document list."""
     try:
         milvus_manager.init_collection()
 
@@ -356,7 +368,7 @@ async def list_documents(_: User = Depends(require_admin)):
         documents = [DocumentInfo(**stats) for stats in file_stats.values()]
         return DocumentListResponse(documents=documents)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取文档列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
 
 @router.post("/documents/upload/async", response_model=DocumentUploadStartResponse)
 async def upload_document_async(
@@ -364,30 +376,30 @@ async def upload_document_async(
     file: UploadFile = File(...),
     _: User = Depends(require_admin),
 ):
-    """轻量版异步上传：文件落盘后立即返回 job_id，后台继续解析和向量化。"""
+    """Start async global document upload and indexing."""
     filename = file.filename or ""
     if not filename:
-        raise HTTPException(status_code=400, detail="文件名不能为空")
+        raise HTTPException(status_code=400, detail="Filename is required")
     if not _is_supported_document(filename):
-        raise HTTPException(status_code=400, detail="仅支持 PDF、Word 和 Excel 文档")
+        raise HTTPException(status_code=400, detail="Only PDF, Word, and Excel documents are supported")
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     job = upload_job_manager.create_job(filename)
     file_path = UPLOAD_DIR / filename
 
     try:
-        upload_job_manager.update_step(job["job_id"], "upload", 1, "running", "正在保存文件到服务器")
+        upload_job_manager.update_step(job["job_id"], "upload", 1, "running", "Saving file on server")
         await _save_upload_file(file, file_path)
-        upload_job_manager.complete_step(job["job_id"], "upload", "文件已上传，等待后台处理")
+        upload_job_manager.complete_step(job["job_id"], "upload", "File uploaded; waiting for background processing")
     except Exception as e:
-        upload_job_manager.fail_job(job["job_id"], "upload", f"文件保存失败: {e}")
-        raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
+        upload_job_manager.fail_job(job["job_id"], "upload", f"File save failed: {e}")
+        raise HTTPException(status_code=500, detail=f"File save failed: {e}")
 
     background_tasks.add_task(_process_upload_job, job["job_id"], str(file_path), filename)
     return DocumentUploadStartResponse(
         job_id=job["job_id"],
         filename=filename,
-        message="文件已上传，正在后台解析和向量化入库",
+        message="File uploaded; parsing and indexing in the background",
     )
 
 
@@ -395,7 +407,7 @@ async def upload_document_async(
 async def get_upload_job(job_id: str, _: User = Depends(require_admin)):
     job = upload_job_manager.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="上传任务不存在或已过期")
+        raise HTTPException(status_code=404, detail="Upload job not found or expired")
     return DocumentUploadJobResponse(**job)
 
 
@@ -412,20 +424,20 @@ async def delete_document_async(
     background_tasks: BackgroundTasks,
     _: User = Depends(require_admin),
 ):
-    """轻量版异步删除：立即返回 job_id，实际删除在后台执行。"""
+    """Start async deletion for one global document."""
     job = delete_job_manager.create_job(
         filename,
         steps=DELETE_STEPS,
         current_step="prepare",
-        message="等待删除",
+        message="Waiting to delete",
         completion_step="parent_store",
     )
-    delete_job_manager.update_step(job["job_id"], "prepare", 1, "running", "删除任务已提交")
+    delete_job_manager.update_step(job["job_id"], "prepare", 1, "running", "Delete job submitted")
     background_tasks.add_task(_process_delete_job, job["job_id"], filename)
     return DocumentDeleteStartResponse(
         job_id=job["job_id"],
         filename=filename,
-        message=f"正在删除 {filename}",
+        message=f"Deleting {filename}",
     )
 
 
@@ -433,24 +445,24 @@ async def delete_document_async(
 async def get_delete_job(job_id: str, _: User = Depends(require_admin)):
     job = delete_job_manager.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="删除任务不存在或已过期")
+        raise HTTPException(status_code=404, detail="Delete job not found or expired")
     return DocumentDeleteJobResponse(**job)
 
 
 @router.post("/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(file: UploadFile = File(...), _: User = Depends(require_admin)):
-    """上传文档并进行 embedding（管理员）"""
+    """Upload and embed one global document synchronously. Admin only."""
     try:
         filename = file.filename or ""
         file_lower = filename.lower()
         if not filename:
-            raise HTTPException(status_code=400, detail="文件名不能为空")
+            raise HTTPException(status_code=400, detail="Filename is required")
         if not (
             file_lower.endswith(".pdf")
             or file_lower.endswith((".docx", ".doc"))
             or file_lower.endswith((".xlsx", ".xls"))
         ):
-            raise HTTPException(status_code=400, detail="仅支持 PDF、Word 和 Excel 文档")
+            raise HTTPException(status_code=400, detail="Only PDF, Word, and Excel documents are supported")
 
         os.makedirs(UPLOAD_DIR, exist_ok=True)
         milvus_manager.init_collection()
@@ -477,15 +489,15 @@ async def upload_document(file: UploadFile = File(...), _: User = Depends(requir
         try:
             new_docs = loader.load_document(str(file_path), filename)
         except Exception as doc_err:
-            raise HTTPException(status_code=500, detail=f"文档处理失败: {doc_err}")
+            raise HTTPException(status_code=500, detail=f"Document processing failed: {doc_err}")
 
         if not new_docs:
-            raise HTTPException(status_code=500, detail="文档处理失败，未能提取内容")
+            raise HTTPException(status_code=500, detail="Document processing failed: no content extracted")
 
         parent_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) in (1, 2)]
         leaf_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) == 3]
         if not leaf_docs:
-            raise HTTPException(status_code=500, detail="文档处理失败，未生成可检索叶子分块")
+            raise HTTPException(status_code=500, detail="Document processing failed: no searchable leaf chunks were generated")
 
         parent_chunk_store.upsert_documents(parent_docs)
         milvus_writer.write_documents(leaf_docs)
@@ -494,19 +506,19 @@ async def upload_document(file: UploadFile = File(...), _: User = Depends(requir
             filename=filename,
             chunks_processed=len(leaf_docs),
             message=(
-                f"成功上传并处理 {filename}，叶子分块 {len(leaf_docs)} 个，"
-                f"父级分块 {len(parent_docs)} 个（存入 PostgreSQL）"
+                f"Uploaded and processed {filename}: {len(leaf_docs)} leaf chunks, "
+                f"{len(parent_docs)} parent chunks stored in PostgreSQL"
             ),
         )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Document upload failed: {str(e)}")
 
 
 @router.delete("/documents/{filename}", response_model=DocumentDeleteResponse)
 async def delete_document(filename: str, _: User = Depends(require_admin)):
-    """删除文档在 Milvus 中的向量（保留本地文件，管理员）"""
+    """Delete one global document from Milvus while keeping the local file."""
     try:
         milvus_manager.init_collection()
 
@@ -518,7 +530,7 @@ async def delete_document(filename: str, _: User = Depends(require_admin)):
         return DocumentDeleteResponse(
             filename=filename,
             chunks_deleted=result.get("delete_count", 0) if isinstance(result, dict) else 0,
-            message=f"成功删除文档 {filename} 的向量数据（本地文件已保留）",
+            message=f"Deleted vectors for {filename}; local file was kept.",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除文档失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Document deletion failed: {str(e)}")

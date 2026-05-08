@@ -1,7 +1,7 @@
-import os
 import base64
 import hashlib
 import hmac
+import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
@@ -33,7 +33,6 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     if not plain_password or not password_hash:
         return False
 
-    # New format: pbkdf2_sha256$<rounds>$<salt_b64>$<digest_b64>
     if password_hash.startswith("pbkdf2_sha256$"):
         try:
             _, rounds, salt_b64, digest_b64 = password_hash.split("$", 3)
@@ -49,7 +48,6 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
         except Exception:
             return False
 
-    # Backward compatibility for legacy passlib/bcrypt hashes.
     if password_hash.startswith("$2") or password_hash.startswith("$bcrypt"):
         try:
             from passlib.context import CryptContext
@@ -90,9 +88,7 @@ def create_access_token(username: str, role: str) -> str:
 
 def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.query(User).filter(User.username == username).first()
-    if not user:
-        return None
-    if not verify_password(password, user.password_hash):
+    if not user or not verify_password(password, user.password_hash):
         return None
     return user
 
@@ -100,7 +96,7 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="无效或过期的认证令牌",
+        detail="Invalid or expired authentication token",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -119,7 +115,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="管理员权限不足")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permission is required")
     return current_user
 
 
@@ -129,4 +125,4 @@ def resolve_role(requested_role: str | None, admin_code: str | None) -> str:
         return "user"
     if ADMIN_INVITE_CODE and admin_code == ADMIN_INVITE_CODE:
         return "admin"
-    raise HTTPException(status_code=403, detail="管理员邀请码错误")
+    raise HTTPException(status_code=403, detail="Invalid admin invite code")

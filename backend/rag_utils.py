@@ -427,3 +427,8 @@ def retrieve_documents_for_evaluation(
         meta["retrieval_mode"] = "failed"
         meta["rerank_error"] = str(exc)
         return {"docs": [], "meta": meta}
+
+
+def rerank_documents(query: str, docs: List[dict], top_k: int) -> Tuple[List[dict], Dict[str, Any]]:
+    """Public wrapper for unified reranking of already-retrieved candidates."""
+    return _rerank_documents(query=query, docs=docs, top_k=top_k)

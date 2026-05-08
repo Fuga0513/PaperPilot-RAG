@@ -87,7 +87,7 @@ createApp({
 
             messages: [],
             userInput: '',
-            useGlobalKnowledge: false,
+            retrievalScope: 'private',
             isLoading: false,
             abortController: null,
             streamingMessageIndex: null,
@@ -1322,7 +1322,7 @@ createApp({
             if (!this.requireAuth()) return;
             const text = this.userInput.trim();
             if (!text || this.isLoading || this.isComposing) return;
-            if (!this.useGlobalKnowledge && this.papers.length > 0 && !this.hasIndexedPapers) {
+            if (this.retrievalScope !== 'global' && this.papers.length > 0 && !this.hasIndexedPapers) {
                 this.showError('No indexed papers are available yet. Please index a paper before chatting with your Paper Library.');
                 this.activeNav = 'library';
                 return;
@@ -1331,7 +1331,7 @@ createApp({
             await this.startSSEChat({
                 message: text,
                 session_id: this.currentSessionId,
-                use_global_knowledge: this.useGlobalKnowledge
+                retrieval_scope: this.retrievalScope
             });
         },
 
