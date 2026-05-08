@@ -78,6 +78,7 @@ createApp({
             isSavingMemory: false,
             isParsingPaper: false,
             isIndexingPaper: false,
+            deletingPaperIds: [],
             documents: [],
             sessions: [],
             currentSessionId: 'session_' + Date.now(),
@@ -102,6 +103,7 @@ createApp({
             activeUploadJobId: '',
             uploadPollTimer: null,
             deleteJobs: {},
+            deletingDocuments: [],
             deletePollTimers: {},
             deleteRemoveTimers: {},
 
@@ -342,9 +344,12 @@ createApp({
             this.sessions = [];
             this.papers = [];
             this.documents = [];
+            this.deleteJobs = {};
+            this.deletingDocuments = [];
             this.selectedPaper = null;
             this.selectedPaperDetail = null;
             this.selectedPaperIds = [];
+            this.deletingPaperIds = [];
             this.comparisonResult = '';
             this.reviewComments = '';
             this.reviewPaperId = '';
@@ -445,6 +450,7 @@ createApp({
             if (panel === 'reviewer') this.loadPapers();
             if (panel === 'writing') this.loadPapers();
             if (panel === 'evaluation') this.loadEvaluationRuns();
+            if (panel === 'documents') this.loadDocuments();
             if (panel === 'memory') this.loadMemoryPanel();
             if (panel === 'history') this.loadSessions();
         },
@@ -655,6 +661,29 @@ createApp({
                 await this.loadPaperDetail(paperId);
             } finally {
                 this.isIndexingPaper = false;
+            }
+        },
+
+        async deletePaper(paper) {
+            // DELETE /papers/{id}; backend removes only the current user's paper and vectors.
+            if (!paper || this.deletingPaperIds.includes(paper.id)) return;
+            const title = this.formatPaperTitle(paper);
+            if (!confirm(`Delete "${title}" from your Paper Library and RAG index?`)) return;
+            this.deletingPaperIds = [...this.deletingPaperIds, paper.id];
+            this.clearError();
+            try {
+                await this.apiDelete(`/papers/${encodeURIComponent(paper.id)}`);
+                this.selectedPaperIds = this.selectedPaperIds.filter(id => id !== paper.id);
+                this.writingPaperIds = this.writingPaperIds.filter(id => id !== paper.id);
+                if (this.selectedPaper?.id === paper.id) {
+                    this.selectedPaper = null;
+                    this.selectedPaperDetail = null;
+                }
+                await this.loadPapers();
+            } catch (error) {
+                this.showError('Failed to delete paper: ' + error.message);
+            } finally {
+                this.deletingPaperIds = this.deletingPaperIds.filter(id => id !== paper.id);
             }
         },
 
@@ -992,9 +1021,9 @@ createApp({
         },
 
         async loadDocuments() {
-            // GET /documents for admins and mirror results into papers.
+            // GET /documents for admins to manage the global SuperMew knowledge base.
             if (!this.isAdmin) {
-                this.papers = [];
+                this.documents = [];
                 return;
             }
             this.loading.documents = true;
@@ -1007,6 +1036,24 @@ createApp({
             } finally {
                 this.loading.documents = false;
                 this.documentsLoading = false;
+            }
+        },
+
+        async uploadGlobalDocument() {
+            // POST /documents/upload/async; admins upload into the global document RAG store.
+            if (!this.isAdmin || !this.selectedFile || this.isUploading) return;
+            this.isUploading = true;
+            this.uploadProgress = 'Uploading global document...';
+            this.uploadSteps = this.createUploadSteps();
+            this.updateUploadStep('upload', 1, 'running', 'Starting upload');
+            try {
+                const job = await this.uploadFileWithProgress(this.selectedFile);
+                this.activeUploadJobId = job.job_id;
+                this.startUploadJobPolling(job.job_id);
+            } catch (error) {
+                this.uploadProgress = 'Global document upload failed: ' + error.message;
+                this.showError(this.uploadProgress);
+                this.isUploading = false;
             }
         },
 
@@ -1137,8 +1184,9 @@ createApp({
             this.isUploading = false;
             this.selectedFile = null;
             if (this.$refs.fileInput) this.$refs.fileInput.value = '';
+            if (this.$refs.globalFileInput) this.$refs.globalFileInput.value = '';
             await this.loadDocuments();
-            this.activeNav = 'library';
+            this.activeNav = 'documents';
         },
 
         stopUploadJobPolling() {
@@ -1156,6 +1204,60 @@ createApp({
                 if (!exists && current) merged.push(current);
             });
             return merged;
+        },
+
+        async deleteGlobalDocument(filename) {
+            // DELETE /documents/delete/async/{filename}; admin-only global document deletion.
+            if (!this.isAdmin || !filename || this.deletingDocuments.includes(filename)) return;
+            if (!confirm(`Delete global RAG document "${filename}" and its vectors?`)) return;
+            this.deletingDocuments = [...this.deletingDocuments, filename];
+            this.clearError();
+            try {
+                const job = await this.apiDelete(`/documents/delete/async/${encodeURIComponent(filename)}`);
+                this.deleteJobs[filename] = { ...job, status: 'running' };
+                this.startDeleteJobPolling(filename, job.job_id);
+            } catch (error) {
+                this.deletingDocuments = this.deletingDocuments.filter(item => item !== filename);
+                this.showError('Failed to start document deletion: ' + error.message);
+            }
+        },
+
+        startDeleteJobPolling(filename, jobId) {
+            // Poll GET /documents/delete/jobs/{job_id} and update the global document row.
+            if (this.deletePollTimers[filename]) clearInterval(this.deletePollTimers[filename]);
+            const poll = async () => {
+                try {
+                    const job = await this.apiGet(`/documents/delete/jobs/${encodeURIComponent(jobId)}`);
+                    this.deleteJobs[filename] = job;
+                    if (job.status === 'completed') await this.finishDeleteJob(filename);
+                    if (job.status === 'failed') this.failDeleteJob(filename, job.error || job.message);
+                } catch (error) {
+                    this.failDeleteJob(filename, error.message);
+                }
+            };
+            poll();
+            this.deletePollTimers[filename] = setInterval(poll, 1000);
+        },
+
+        async finishDeleteJob(filename) {
+            // Remove completed delete job state after refreshing /documents.
+            if (this.deletePollTimers[filename]) clearInterval(this.deletePollTimers[filename]);
+            delete this.deletePollTimers[filename];
+            this.deletingDocuments = this.deletingDocuments.filter(item => item !== filename);
+            await this.loadDocuments();
+            this.deleteRemoveTimers[filename] = setTimeout(() => {
+                delete this.deleteJobs[filename];
+                delete this.deleteRemoveTimers[filename];
+            }, 2000);
+        },
+
+        failDeleteJob(filename, message) {
+            // Surface async delete failures without removing the document row.
+            if (this.deletePollTimers[filename]) clearInterval(this.deletePollTimers[filename]);
+            delete this.deletePollTimers[filename];
+            this.deletingDocuments = this.deletingDocuments.filter(item => item !== filename);
+            this.deleteJobs[filename] = { ...(this.deleteJobs[filename] || {}), status: 'failed', message };
+            this.showError(`Failed to delete ${filename}: ${message}`);
         },
 
         stopAllDeleteJobPolling() {

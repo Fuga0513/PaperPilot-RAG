@@ -108,6 +108,11 @@ textarea:disabled {
     color: var(--muted);
 }
 
+.admin-note {
+    margin-top: 4px;
+    color: #175cd3 !important;
+}
+
 .auth-description {
     margin: 14px 0 16px;
     line-height: 1.55;
@@ -951,12 +956,24 @@ textarea:disabled {
     margin-top: 2px;
 }
 
-.paper-open-action {
+.paper-row-actions {
     grid-column: 3;
     grid-row: 2 / span 2;
     align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.paper-open-action {
     min-height: 32px;
     padding: 4px 8px;
+}
+
+.compact-action {
+    min-height: 32px;
+    padding: 4px 8px;
+    font-size: 0.86rem;
 }
 
 .paper-item small,
@@ -1329,6 +1346,59 @@ textarea:disabled {
     font-size: 0.85rem;
 }
 
+/* Admin global documents */
+.admin-documents-layout {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+    min-height: 560px;
+}
+
+.global-upload-box,
+.global-document-list {
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.global-upload-box {
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.global-document-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.global-document-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-soft);
+    padding: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.global-document-card div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.global-document-card strong,
+.global-document-card small {
+    overflow-wrap: anywhere;
+}
+
+.global-document-card small {
+    color: var(--muted);
+}
+
 /* Evaluation */
 .evaluation-layout {
     display: grid;
@@ -1524,6 +1594,7 @@ textarea:disabled {
     }
 
     .library-layout,
+    .admin-documents-layout,
     .reviewer-layout,
     .writing-layout,
     .evaluation-layout,
@@ -1533,6 +1604,7 @@ textarea:disabled {
     }
 
     .library-list,
+    .global-upload-box,
     .reviewer-input-box,
     .writing-input-box,
     .evaluation-input-box,

@@ -87,6 +87,9 @@
                     <button @click="setActivePanel('evaluation')" :class="['nav-btn', {active: activeNav === 'evaluation'}]">
                         <i class="fas fa-chart-simple"></i> Evaluation Report
                     </button>
+                    <button v-if="isAdmin" @click="setActivePanel('documents')" :class="['nav-btn', {active: activeNav === 'documents'}]">
+                        <i class="fas fa-folder-tree"></i> Global Documents
+                    </button>
                 </nav>
 
                 <section class="sidebar-section">
@@ -104,6 +107,7 @@
                     <button class="tool-entry" @click="setActivePanel('reviewer')">Reviewer Analysis</button>
                     <button class="tool-entry" @click="setActivePanel('writing')">Research Writing</button>
                     <button class="tool-entry" @click="setActivePanel('evaluation')">Evaluation Report</button>
+                    <button v-if="isAdmin" class="tool-entry" @click="setActivePanel('documents')">Global Document Admin</button>
                 </section>
             </aside>
 
@@ -136,6 +140,7 @@
                                 <div>
                                     <h2>Paper Library</h2>
                                     <p>Your uploaded papers are isolated by the current logged-in user.</p>
+                                    <p v-if="isAdmin" class="admin-note">Admin note: this panel is still your personal paper library. Use Global Documents for the shared RAG knowledge base.</p>
                                 </div>
                                 <button class="secondary-action" :disabled="loading.papers" @click="loadPapers">
                                     <i :class="loading.papers ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
@@ -190,7 +195,17 @@
                                             <small>{{ paper.year || '-' }} · {{ paper.venue || 'Venue pending' }}</small>
                                             <small :class="['paper-status', paperStatusClass(paper.status)]">{{ paper.status }}</small>
                                             <small>Uploaded {{ formatDate(paper.created_at) }}</small>
-                                            <button class="text-action paper-open-action" @click="selectPaper(paper)">Details</button>
+                                            <div class="paper-row-actions">
+                                                <button class="text-action paper-open-action" @click="selectPaper(paper)">Details</button>
+                                                <button
+                                                    class="danger-action compact-action"
+                                                    :disabled="deletingPaperIds.includes(paper.id)"
+                                                    @click.stop="deletePaper(paper)"
+                                                >
+                                                    <i :class="deletingPaperIds.includes(paper.id) ? 'fas fa-spinner fa-spin' : 'fas fa-trash'"></i>
+                                                    {{ deletingPaperIds.includes(paper.id) ? 'Deleting' : 'Delete' }}
+                                                </button>
+                                            </div>
                                         </article>
                                     </div>
                                 </div>
@@ -214,6 +229,14 @@
                                         >
                                             <i :class="isIndexingPaper ? 'fas fa-spinner fa-spin' : 'fas fa-database'"></i>
                                             {{ isIndexingPaper ? 'Indexing...' : 'Index / Reindex' }}
+                                        </button>
+                                        <button
+                                            class="danger-action detail-action"
+                                            :disabled="deletingPaperIds.includes(selectedPaper.id)"
+                                            @click="deletePaper(selectedPaper)"
+                                        >
+                                            <i :class="deletingPaperIds.includes(selectedPaper.id) ? 'fas fa-spinner fa-spin' : 'fas fa-trash'"></i>
+                                            {{ deletingPaperIds.includes(selectedPaper.id) ? 'Deleting...' : 'Delete Paper' }}
                                         </button>
                                         <dl>
                                             <dt>Authors</dt>
@@ -285,6 +308,67 @@
                                         <p v-if="step.message">{{ step.message }}</p>
                                     </div>
                                 </div>
+                            </div>
+                        </section>
+
+                        <section v-if="activeNav === 'documents' && isAdmin" class="panel admin-documents-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <h2>Global Documents</h2>
+                                    <p>Admin-only SuperMew knowledge base. These files are shared global RAG documents, separate from user-owned papers.</p>
+                                </div>
+                                <button class="secondary-action" :disabled="documentsLoading" @click="loadDocuments">
+                                    <i :class="documentsLoading ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
+                                </button>
+                            </div>
+
+                            <div class="admin-documents-layout">
+                                <section class="global-upload-box">
+                                    <h3>Upload Global Document</h3>
+                                    <input ref="globalFileInput" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" :disabled="isUploading" @change="handleFileSelect">
+                                    <div v-if="selectedFile" class="selected-file">
+                                        <i class="fas fa-file"></i>
+                                        <span>{{ selectedFile.name }}</span>
+                                    </div>
+                                    <button class="primary-action" :disabled="isUploading || !selectedFile" @click="uploadGlobalDocument">
+                                        <i :class="isUploading ? 'fas fa-spinner fa-spin' : 'fas fa-cloud-arrow-up'"></i>
+                                        {{ isUploading ? 'Uploading...' : 'Upload to Global RAG' }}
+                                    </button>
+                                    <div v-if="uploadProgress" class="upload-status">{{ uploadProgress }}</div>
+                                    <div v-if="uploadSteps.length" class="upload-step-list">
+                                        <div v-for="step in uploadSteps" :key="step.key" class="upload-step">
+                                            <div class="upload-step-header">
+                                                <span>{{ step.label }}</span>
+                                                <small>{{ step.percent }}%</small>
+                                            </div>
+                                            <div class="upload-step-bar">
+                                                <div class="upload-step-fill" :style="{ width: step.percent + '%' }"></div>
+                                            </div>
+                                            <p v-if="step.message">{{ step.message }}</p>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section class="global-document-list">
+                                    <h3>Indexed Global Documents</h3>
+                                    <div v-if="documentsLoading" class="empty-state compact">Loading documents...</div>
+                                    <div v-else-if="documents.length === 0" class="empty-state compact">No global documents indexed.</div>
+                                    <article v-for="doc in documents" :key="doc.filename" class="global-document-card">
+                                        <div>
+                                            <strong>{{ doc.filename }}</strong>
+                                            <small>{{ doc.file_type || '-' }} · {{ doc.chunk_count || 0 }} chunks</small>
+                                            <small v-if="deleteJobs[doc.filename]">{{ deleteJobs[doc.filename].message || deleteJobs[doc.filename].status }}</small>
+                                        </div>
+                                        <button
+                                            class="danger-action compact-action"
+                                            :disabled="deletingDocuments.includes(doc.filename)"
+                                            @click="deleteGlobalDocument(doc.filename)"
+                                        >
+                                            <i :class="deletingDocuments.includes(doc.filename) ? 'fas fa-spinner fa-spin' : 'fas fa-trash'"></i>
+                                            {{ deletingDocuments.includes(doc.filename) ? 'Deleting' : 'Delete' }}
+                                        </button>
+                                    </article>
+                                </section>
                             </div>
                         </section>
 

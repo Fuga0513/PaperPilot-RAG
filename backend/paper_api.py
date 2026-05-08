@@ -679,11 +679,17 @@ async def delete_paper(
             remove_paper_vectors(paper)
         except Exception:
             logger.exception("Failed to remove paper vectors paper_id=%s user_id=%s", paper_id, current_user.id)
+        file_path = Path(paper.file_path) if paper.file_path else None
         db.delete(paper)
         db.commit()
+        if file_path and file_path.exists():
+            try:
+                file_path.unlink()
+            except OSError:
+                logger.exception("Failed to remove uploaded paper file paper_id=%s path=%s", paper_id, file_path)
         return PaperDeleteResponse(
             paper_id=paper_id,
-            message="Paper database record and indexed vectors deleted.",
+            message="Paper file, database record, and indexed vectors deleted.",
         )
     except HTTPException:
         raise
