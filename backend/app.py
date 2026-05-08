@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 
 import api as api_module
+import evaluation_api as evaluation_api_module
 import memory_api as memory_api_module
 import paper_api as paper_api_module
 from database import init_db
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(api_module.router)
     app.include_router(paper_api_module.router)
     app.include_router(memory_api_module.router)
+    app.include_router(evaluation_api_module.router)
 
     # serve frontend static files at root
     if FRONTEND_DIR.exists():

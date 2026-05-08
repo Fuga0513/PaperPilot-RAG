@@ -406,3 +406,30 @@ class MemoryDeleteResponse(BaseModel):
 class MemoryContextResponse(BaseModel):
     context: str
     session_summary: str = ""
+
+
+class EvaluationRunRequest(BaseModel):
+    dataset_path: Optional[str] = None
+    name: Optional[str] = ""
+    strategies: Optional[List[str]] = None
+    top_k: Optional[int] = 5
+
+
+class EvaluationRunSummary(BaseModel):
+    id: int
+    name: str
+    dataset_path: str
+    strategies: List[str]
+    metrics_json: dict
+    report_path: str
+    markdown_report_path: str = ""
+    created_at: str
+
+
+class EvaluationRunListResponse(BaseModel):
+    runs: List[EvaluationRunSummary]
+
+
+class EvaluationRunDetail(EvaluationRunSummary):
+    report: dict = {}
+    markdown_report: str = ""

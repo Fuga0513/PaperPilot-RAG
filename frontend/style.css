@@ -1329,6 +1329,127 @@ textarea:disabled {
     font-size: 0.85rem;
 }
 
+/* Evaluation */
+.evaluation-layout {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    height: calc(100vh - 210px);
+    min-height: 560px;
+}
+
+.evaluation-input-box,
+.evaluation-output-box {
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.evaluation-input-box {
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.evaluation-input-box label,
+.evaluation-strategies label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.evaluation-input-box input[type="text"],
+.evaluation-input-box input[type="number"] {
+    min-height: 40px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+}
+
+.evaluation-strategies,
+.evaluation-run-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.evaluation-strategies label {
+    flex-direction: row;
+    align-items: center;
+    color: var(--text);
+}
+
+.evaluation-run-item {
+    border: 1px solid var(--line);
+    background: white;
+    border-radius: var(--radius);
+    padding: 10px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.evaluation-run-item small {
+    color: var(--muted);
+}
+
+.metric-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.metric-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    background: white;
+}
+
+.evaluation-table-section {
+    margin-top: 18px;
+}
+
+.evaluation-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.evaluation-table th,
+.evaluation-table td {
+    border-bottom: 1px solid var(--line);
+    padding: 9px;
+    text-align: left;
+}
+
+.evaluation-question-row {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.evaluation-question-row small,
+.evaluation-question-row p {
+    color: var(--muted);
+}
+
+.markdown-report {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    background: white;
+    line-height: 1.6;
+}
+
 /* Buttons */
 .primary-action,
 .secondary-action,
@@ -1405,6 +1526,7 @@ textarea:disabled {
     .library-layout,
     .reviewer-layout,
     .writing-layout,
+    .evaluation-layout,
     .memory-layout {
         height: auto;
         grid-template-columns: 1fr;
@@ -1413,6 +1535,7 @@ textarea:disabled {
     .library-list,
     .reviewer-input-box,
     .writing-input-box,
+    .evaluation-input-box,
     .memory-input-box {
         border-right: 0;
         border-bottom: 1px solid var(--line);

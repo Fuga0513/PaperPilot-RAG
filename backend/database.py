@@ -35,3 +35,7 @@ def _apply_lightweight_migrations() -> None:
             "ALTER TABLE paper_chunks "
             "ADD COLUMN IF NOT EXISTS paper_title VARCHAR(500) NOT NULL DEFAULT ''"
         ))
+        conn.execute(text(
+            "ALTER TABLE evaluation_runs "
+            "ADD COLUMN IF NOT EXISTS markdown_report_path VARCHAR(1024) NOT NULL DEFAULT ''"
+        ))

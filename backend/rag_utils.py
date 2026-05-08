@@ -348,3 +348,82 @@ def retrieve_documents(
                     "candidate_count": 0,
                 },
             }
+
+
+def retrieve_documents_for_evaluation(
+    query: str,
+    top_k: int = 5,
+    *,
+    owner_id: int,
+    strategy: str = "hybrid",
+) -> Dict[str, Any]:
+    """Run a current-user paper retrieval ablation without changing chat retrieval."""
+    allowed = {"dense_only", "bm25_only", "hybrid", "hybrid_rerank", "hybrid_rerank_rewrite"}
+    if strategy not in allowed:
+        raise ValueError(f"unsupported evaluation strategy: {strategy}")
+
+    search_query = query
+    rewrite_meta: Dict[str, Any] = {}
+    if strategy == "hybrid_rerank_rewrite":
+        step_back = step_back_expand(query)
+        search_query = step_back.get("expanded_query") or query
+        rewrite_meta = {
+            "rewrite_strategy": "step_back",
+            "rewritten_query": search_query,
+            "step_back_question": step_back.get("step_back_question", ""),
+            "step_back_answer": step_back.get("step_back_answer", ""),
+        }
+
+    candidate_k = max(top_k * 3, top_k)
+    filter_expr = _build_retrieval_filter(source_type="paper", owner_id=owner_id)
+    meta: Dict[str, Any] = {
+        "strategy": strategy,
+        "query": query,
+        "search_query": search_query,
+        "retrieval_scope": "paper",
+        "owner_filter_applied": True,
+        "candidate_k": candidate_k,
+        "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
+        "rerank_enabled": strategy in {"hybrid_rerank", "hybrid_rerank_rewrite"} and bool(RERANK_MODEL and RERANK_API_KEY and RERANK_BINDING_HOST),
+        "rerank_applied": False,
+        "rerank_model": RERANK_MODEL,
+        "rerank_endpoint": _get_rerank_endpoint(),
+        "rerank_error": None,
+    }
+    meta.update(rewrite_meta)
+
+    try:
+        dense_embedding = None
+        sparse_embedding = None
+        if strategy in {"dense_only", "hybrid", "hybrid_rerank", "hybrid_rerank_rewrite"}:
+            dense_embedding = _embedding_service.get_embeddings([search_query])[0]
+        if strategy in {"bm25_only", "hybrid", "hybrid_rerank", "hybrid_rerank_rewrite"}:
+            sparse_embedding = _embedding_service.get_sparse_embedding(search_query)
+
+        if strategy == "dense_only":
+            docs = _milvus_manager.dense_retrieve(dense_embedding=dense_embedding, top_k=top_k, filter_expr=filter_expr)
+            meta["retrieval_mode"] = "dense_only"
+            return {"docs": docs, "meta": meta}
+
+        if strategy == "bm25_only":
+            docs = _milvus_manager.sparse_retrieve(sparse_embedding=sparse_embedding, top_k=top_k, filter_expr=filter_expr)
+            meta["retrieval_mode"] = "bm25_only"
+            return {"docs": docs, "meta": meta}
+
+        docs = _milvus_manager.hybrid_retrieve(
+            dense_embedding=dense_embedding,
+            sparse_embedding=sparse_embedding,
+            top_k=candidate_k,
+            filter_expr=filter_expr,
+        )
+        meta["retrieval_mode"] = "hybrid"
+        if strategy in {"hybrid_rerank", "hybrid_rerank_rewrite"}:
+            docs, rerank_meta = _rerank_documents(query=search_query, docs=docs, top_k=top_k)
+            meta.update(rerank_meta)
+        else:
+            docs = [{**doc, "rrf_rank": i} for i, doc in enumerate(docs[:top_k], 1)]
+        return {"docs": docs[:top_k], "meta": meta}
+    except Exception as exc:
+        meta["retrieval_mode"] = "failed"
+        meta["rerank_error"] = str(exc)
+        return {"docs": [], "meta": meta}

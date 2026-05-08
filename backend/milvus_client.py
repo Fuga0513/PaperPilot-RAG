@@ -340,6 +340,31 @@ class MilvusManager:
         
         return formatted_results
 
+    def sparse_retrieve(self, sparse_embedding: dict, top_k: int = 5, filter_expr: str = "") -> list[dict]:
+        """Retrieve only with the BM25 sparse vector field for evaluation ablations."""
+        results = self._run_with_reconnect(
+            lambda client: client.search(
+                collection_name=self.collection_name,
+                data=[sparse_embedding],
+                anns_field="sparse_embedding",
+                search_params={"metric_type": "IP", "params": {"drop_ratio_search": 0.2}},
+                limit=top_k,
+                output_fields=RETRIEVAL_OUTPUT_FIELDS,
+                filter=filter_expr,
+            )
+        )
+
+        formatted_results = []
+        for hits in results:
+            for hit in hits:
+                entity = hit.get("entity", {})
+                row = {field: entity.get(field, "" if field in STRING_OUTPUT_FIELDS else 0) for field in RETRIEVAL_OUTPUT_FIELDS}
+                row["id"] = hit.get("id")
+                row["score"] = hit.get("distance", 0.0)
+                formatted_results.append(row)
+
+        return formatted_results
+
     def delete(self, filter_expr: str):
         """删除数据"""
         return self._run_with_reconnect(

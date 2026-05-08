@@ -84,6 +84,9 @@
                     <button @click="setActivePanel('memory')" :class="['nav-btn', {active: activeNav === 'memory'}]">
                         <i class="fas fa-diagram-project"></i> Memory / Project
                     </button>
+                    <button @click="setActivePanel('evaluation')" :class="['nav-btn', {active: activeNav === 'evaluation'}]">
+                        <i class="fas fa-chart-simple"></i> Evaluation Report
+                    </button>
                 </nav>
 
                 <section class="sidebar-section">
@@ -100,7 +103,7 @@
                     <button class="tool-entry" @click="setActivePanel('library')">Paper Comparison</button>
                     <button class="tool-entry" @click="setActivePanel('reviewer')">Reviewer Analysis</button>
                     <button class="tool-entry" @click="setActivePanel('writing')">Research Writing</button>
-                    <button class="tool-entry" disabled>Evaluation Report</button>
+                    <button class="tool-entry" @click="setActivePanel('evaluation')">Evaluation Report</button>
                 </section>
             </aside>
 
@@ -618,6 +621,127 @@
                                             <ul v-else>
                                                 <li v-for="(warning, index) in writingResult.warnings" :key="'warning' + index">{{ warning }}</li>
                                             </ul>
+                                        </section>
+                                    </template>
+                                </section>
+                            </div>
+                        </section>
+
+                        <section v-if="activeNav === 'evaluation'" class="panel evaluation-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <h2>Evaluation Report</h2>
+                                    <p>Run retrieval ablations over your private indexed paper library.</p>
+                                </div>
+                                <button class="secondary-action" :disabled="isLoadingEvaluations" @click="loadEvaluationRuns">
+                                    <i :class="isLoadingEvaluations ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i> Refresh
+                                </button>
+                            </div>
+
+                            <div class="evaluation-layout">
+                                <section class="evaluation-input-box">
+                                    <label>
+                                        <span>JSONL Dataset</span>
+                                        <input type="file" accept=".jsonl" :disabled="isRunningEvaluation" @change="handleEvaluationFileSelect">
+                                    </label>
+                                    <label>
+                                        <span>Run Name</span>
+                                        <input v-model="evaluationName" type="text" :disabled="isRunningEvaluation" placeholder="paperpilot_eval">
+                                    </label>
+                                    <label>
+                                        <span>Top K</span>
+                                        <input v-model.number="evaluationTopK" type="number" min="1" max="20" :disabled="isRunningEvaluation">
+                                    </label>
+                                    <div class="evaluation-strategies">
+                                        <strong>Strategies</strong>
+                                        <label v-for="strategy in evaluationStrategies" :key="strategy">
+                                            <input
+                                                type="checkbox"
+                                                :checked="selectedEvaluationStrategies.includes(strategy)"
+                                                :disabled="isRunningEvaluation"
+                                                @change="toggleEvaluationStrategy(strategy)"
+                                            >
+                                            <span>{{ strategy }}</span>
+                                        </label>
+                                    </div>
+                                    <button class="primary-action" :disabled="isRunningEvaluation || !evaluationFile" @click="runEvaluation">
+                                        <i :class="isRunningEvaluation ? 'fas fa-spinner fa-spin' : 'fas fa-play'"></i>
+                                        {{ isRunningEvaluation ? 'Running...' : 'Run Evaluation' }}
+                                    </button>
+                                    <button class="secondary-action" :disabled="isLoadingEvaluations || evaluationRuns.length === 0" @click="loadLatestEvaluationReport">
+                                        <i :class="isLoadingEvaluations ? 'fas fa-spinner fa-spin' : 'fas fa-clock-rotate-left'"></i>
+                                        Load Latest Report
+                                    </button>
+
+                                    <div class="evaluation-run-list">
+                                        <strong>Recent Runs</strong>
+                                        <div v-if="isLoadingEvaluations" class="empty-state compact">Loading runs...</div>
+                                        <div v-else-if="evaluationRuns.length === 0" class="empty-state compact">No evaluation runs yet.</div>
+                                        <button
+                                            v-for="run in evaluationRuns"
+                                            :key="run.id"
+                                            class="evaluation-run-item"
+                                            :disabled="isLoadingEvaluations"
+                                            @click="loadEvaluationRun(run.id)"
+                                        >
+                                            <span>{{ run.name || ('Run #' + run.id) }}</span>
+                                            <small>{{ formatDate(run.created_at) }}</small>
+                                        </button>
+                                    </div>
+                                </section>
+
+                                <section class="evaluation-output-box">
+                                    <div v-if="!evaluationReport" class="empty-state">Evaluation metrics and Markdown report will appear here.</div>
+                                    <template v-else>
+                                        <div class="metric-card-grid">
+                                            <article v-for="(metrics, strategy) in evaluationReport.metrics" :key="strategy" class="metric-card">
+                                                <strong>{{ strategy }}</strong>
+                                                <span>Hit {{ metricPercent(metrics.hit_at_k) }}</span>
+                                                <span>Recall {{ metricPercent(metrics.recall_at_k) }}</span>
+                                                <span>MRR {{ Number(metrics.mrr || 0).toFixed(3) }}</span>
+                                                <span>Citation {{ metricPercent(metrics.citation_hit_rate) }}</span>
+                                            </article>
+                                        </div>
+
+                                        <section class="evaluation-table-section">
+                                            <h3>Strategy Comparison</h3>
+                                            <table class="evaluation-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Strategy</th>
+                                                        <th>Hit@k</th>
+                                                        <th>Recall@k</th>
+                                                        <th>MRR</th>
+                                                        <th>Citation Hit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr v-for="(metrics, strategy) in evaluationReport.metrics" :key="'row' + strategy">
+                                                        <td>{{ strategy }}</td>
+                                                        <td>{{ metricPercent(metrics.hit_at_k) }}</td>
+                                                        <td>{{ metricPercent(metrics.recall_at_k) }}</td>
+                                                        <td>{{ Number(metrics.mrr || 0).toFixed(3) }}</td>
+                                                        <td>{{ metricPercent(metrics.citation_hit_rate) }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </section>
+
+                                        <section class="evaluation-table-section">
+                                            <h3>Question Hits</h3>
+                                            <div v-for="(item, idx) in (evaluationReport.items || [])" :key="idx" class="evaluation-question-row">
+                                                <strong>{{ item.question }}</strong>
+                                                <small>{{ item.strategy }} · Hit {{ item.hit }} · Recall {{ Number(item.recall || 0).toFixed(3) }} · MRR {{ Number(item.mrr || 0).toFixed(3) }}</small>
+                                                <p v-if="(item.retrieved_chunks || []).length">
+                                                    {{ (item.retrieved_chunks[0].paper_title || item.retrieved_chunks[0].filename || 'Unknown') }}
+                                                    <span v-if="item.retrieved_chunks[0].section_title">/ {{ item.retrieved_chunks[0].section_title }}</span>
+                                                </p>
+                                            </div>
+                                        </section>
+
+                                        <section class="evaluation-table-section">
+                                            <h3>Markdown Report</h3>
+                                            <div class="markdown-report" v-html="parseMarkdown(evaluationMarkdown)"></div>
                                         </section>
                                     </template>
                                 </section>

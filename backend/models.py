@@ -19,6 +19,7 @@ class User(Base):
     papers = relationship("Paper", back_populates="owner", cascade="all, delete-orphan")
     research_projects = relationship("ResearchProject", back_populates="owner", cascade="all, delete-orphan")
     memory_items = relationship("MemoryItem", back_populates="owner", cascade="all, delete-orphan")
+    evaluation_runs = relationship("EvaluationRun", back_populates="owner", cascade="all, delete-orphan")
 
 
 class ChatSession(Base):
@@ -195,3 +196,40 @@ class ProjectMemory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     project = relationship("ResearchProject", back_populates="project_memories")
+
+
+class EvaluationRun(Base):
+    """User-owned RAG retrieval evaluation run and report metadata."""
+
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    dataset_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    strategies: Mapped[dict] = mapped_column(JSON, default=list, nullable=False)
+    metrics_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    report_path: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    markdown_report_path: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    owner = relationship("User", back_populates="evaluation_runs")
+    item_results = relationship("EvaluationItemResult", back_populates="run", cascade="all, delete-orphan")
+
+
+class EvaluationItemResult(Base):
+    """Per-question, per-strategy retrieval evaluation result."""
+
+    __tablename__ = "evaluation_item_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    hit: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    recall: Mapped[str] = mapped_column(String(40), default="0", nullable=False)
+    mrr: Mapped[str] = mapped_column(String(40), default="0", nullable=False)
+    citation_hit: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retrieved_chunks_json: Mapped[dict] = mapped_column(JSON, default=list, nullable=False)
+
+    run = relationship("EvaluationRun", back_populates="item_results")

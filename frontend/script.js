@@ -50,6 +50,16 @@ createApp({
             writingResult: null,
             isRunningWritingTask: false,
             writingCopyStatus: '',
+            evaluationStrategies: ['dense_only', 'bm25_only', 'hybrid', 'hybrid_rerank', 'hybrid_rerank_rewrite'],
+            selectedEvaluationStrategies: ['dense_only', 'bm25_only', 'hybrid', 'hybrid_rerank', 'hybrid_rerank_rewrite'],
+            evaluationFile: null,
+            evaluationName: '',
+            evaluationTopK: 5,
+            evaluationRuns: [],
+            evaluationReport: null,
+            evaluationMarkdown: '',
+            isRunningEvaluation: false,
+            isLoadingEvaluations: false,
             projects: [],
             selectedProjectId: '',
             projectForm: { name: '', description: '' },
@@ -95,7 +105,7 @@ createApp({
             deletePollTimers: {},
             deleteRemoveTimers: {},
 
-            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false, reviewer: false, rebuttal: false, memory: false },
+            loading: { user: false, sessions: false, documents: false, papers: false, paperDetail: false, comparison: false, reviewer: false, rebuttal: false, memory: false, evaluation: false },
             documentsLoading: false,
             errorMessage: ''
         };
@@ -344,6 +354,10 @@ createApp({
             this.writingUserText = '';
             this.writingPaperIds = [];
             this.writingResult = null;
+            this.evaluationRuns = [];
+            this.evaluationReport = null;
+            this.evaluationMarkdown = '';
+            this.evaluationFile = null;
             this.projects = [];
             this.selectedProjectId = '';
             this.memoryItems = [];
@@ -430,6 +444,7 @@ createApp({
             if (panel === 'library') this.loadPapers();
             if (panel === 'reviewer') this.loadPapers();
             if (panel === 'writing') this.loadPapers();
+            if (panel === 'evaluation') this.loadEvaluationRuns();
             if (panel === 'memory') this.loadMemoryPanel();
             if (panel === 'history') this.loadSessions();
         },
@@ -870,6 +885,110 @@ createApp({
             } catch (error) {
                 this.showError('Copy failed. Please select the result text manually.');
             }
+        },
+
+        // =========================
+        // Evaluation Report
+        // =========================
+        handleEvaluationFileSelect(event) {
+            // Store the JSONL file that will be sent to POST /evaluation/run.
+            this.evaluationFile = event.target.files?.[0] || null;
+        },
+
+        toggleEvaluationStrategy(strategy) {
+            // Toggle one retrieval ablation strategy for POST /evaluation/run.
+            if (this.isRunningEvaluation) return;
+            if (this.selectedEvaluationStrategies.includes(strategy)) {
+                this.selectedEvaluationStrategies = this.selectedEvaluationStrategies.filter(item => item !== strategy);
+                return;
+            }
+            this.selectedEvaluationStrategies = [...this.selectedEvaluationStrategies, strategy];
+        },
+
+        async runEvaluation() {
+            // POST /evaluation/run with JSONL upload and render the owned report.
+            if (!this.requireAuth() || this.isRunningEvaluation) return;
+            if (!this.evaluationFile) {
+                this.showError('Please choose a JSONL evaluation dataset.');
+                return;
+            }
+            if (this.selectedEvaluationStrategies.length === 0) {
+                this.showError('Please select at least one strategy.');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', this.evaluationFile);
+            formData.append('name', this.evaluationName || this.evaluationFile.name);
+            formData.append('strategies', this.selectedEvaluationStrategies.join(','));
+            formData.append('top_k', String(this.evaluationTopK || 5));
+            this.isRunningEvaluation = true;
+            this.clearError();
+            try {
+                const result = await this.apiUpload('/evaluation/run', formData);
+                this.renderEvaluationReport(result);
+                await this.loadEvaluationRuns();
+            } catch (error) {
+                this.showError('Failed to run evaluation: ' + error.message);
+            } finally {
+                this.isRunningEvaluation = false;
+            }
+        },
+
+        async loadEvaluationRuns() {
+            // GET /evaluation/runs and refresh the current user's evaluation history.
+            if (!this.requireAuth()) return;
+            this.isLoadingEvaluations = true;
+            try {
+                const data = await this.apiGet('/evaluation/runs');
+                this.evaluationRuns = data.runs || [];
+            } catch (error) {
+                this.showError('Failed to load evaluation runs: ' + error.message);
+            } finally {
+                this.isLoadingEvaluations = false;
+            }
+        },
+
+        async loadEvaluationRun(runId) {
+            // GET /evaluation/runs/{id}; backend only returns reports owned by this user.
+            if (!runId || this.isLoadingEvaluations) return;
+            this.isLoadingEvaluations = true;
+            try {
+                const result = await this.apiGet(`/evaluation/runs/${encodeURIComponent(runId)}`);
+                this.renderEvaluationReport(result);
+            } catch (error) {
+                this.showError('Failed to load evaluation report: ' + error.message);
+            } finally {
+                this.isLoadingEvaluations = false;
+            }
+        },
+
+        loadLatestEvaluationReport() {
+            // Load the newest run from the already fetched current-user run list.
+            const latest = this.evaluationRuns[0];
+            if (!latest) {
+                this.showError('No evaluation report is available yet.');
+                return;
+            }
+            this.loadEvaluationRun(latest.id);
+        },
+
+        renderEvaluationReport(result) {
+            // Store backend JSON/Markdown report for cards, table, and details.
+            const report = result?.report || {};
+            this.evaluationReport = {
+                ...report,
+                id: result?.id,
+                name: result?.name,
+                created_at: result?.created_at,
+                metrics: report.metrics || result?.metrics_json || {}
+            };
+            this.evaluationMarkdown = result?.markdown_report || report.markdown_report || '';
+        },
+
+        metricPercent(value) {
+            // Render a metric ratio as a readable percentage.
+            const num = Number(value || 0);
+            return (num * 100).toFixed(1) + '%';
         },
 
         async loadDocuments() {
